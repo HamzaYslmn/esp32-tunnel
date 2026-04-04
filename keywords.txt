@@ -1,0 +1,37 @@
+#######################################
+# Syntax Coloring Map for esp32-tunnel
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+TunnelHandler	KEYWORD1
+TunnelProvider	KEYWORD1
+TunnelMode	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+tunnelSetup	KEYWORD2
+tunnelStop	KEYWORD2
+tunnelURL	KEYWORD2
+tunnelReady	KEYWORD2
+tunnelProviderName	KEYWORD2
+tunnelLastIP	KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+LOCALTUNNEL	LITERAL1
+SELFHOST	LITERAL1
+TUN_STRICT	LITERAL1
+TUN_FLEX	LITERAL1
+TUN_WS_PATH	LITERAL1
+TUN_PORT	LITERAL1
+TUN_POOL	LITERAL1
+TUN_STALE	LITERAL1
+TUN_REALLOC	LITERAL1
+TUN_RECONNECT	LITERAL1

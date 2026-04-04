@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>esp32-tunnel</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#0d1117;color:#c9d1d9;font:15px/1.6 -apple-system,system-ui,sans-serif;
+      min-height:100vh;padding:40px 20px}
+    .c{max-width:480px;margin:0 auto;text-align:center}
+    h1{color:#f0883e;font-size:28px;margin-bottom:4px}
+    .tag{color:#8b949e;font-size:14px;margin-bottom:24px}
+    .badge{display:inline-flex;align-items:center;gap:6px;background:#161b22;
+      border:1px solid #30363d;border-radius:20px;padding:4px 14px;font-size:13px;margin:12px 0 24px}
+    .dot{width:8px;height:8px;border-radius:50%;background:#484f58}
+    .dot.ok{background:#3fb950}.dot.err{background:#f85149}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px}
+    .lbl{color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+    .val{color:#e6edf3;font-size:28px;font-weight:600;margin-top:4px}
+    footer{margin-top:32px}
+    a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
+    .sep{color:#30363d;margin:0 8px}
+  </style>
+</head>
+<body>
+  <div class="c">
+    <h1>⚡ esp32-tunnel</h1>
+    <p class="tag">Self-hosted tunnel relay for ESP32</p>
+    <div class="badge">
+      <span class="dot" id="dot"></span>
+      <span id="st">Connecting…</span>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="lbl">Active Tunnels</div>
+        <div class="val" id="cnt">—</div>
+      </div>
+      <div class="card">
+        <div class="lbl">Uptime</div>
+        <div class="val" id="up">—</div>
+      </div>
+      <div class="card">
+        <div class="lbl">CPU</div>
+        <div class="val" id="cpu">—</div>
+      </div>
+      <div class="card">
+        <div class="lbl">RAM</div>
+        <div class="val" id="ram">—</div>
+      </div>
+    </div>
+    <footer>
+      <a href="https://github.com/HamzaYslmn/esp32-tunnel">GitHub</a>
+      <span class="sep">·</span>
+      <a href="/api/status">API</a>
+    </footer>
+  </div>
+  <script>
+    const $=id=>document.getElementById(id);
+    function fmt(s){
+      if(s<60)return s+'s';if(s<3600)return~~(s/60)+'m';
+      if(s<86400)return~~(s/3600)+'h '+~~((s%3600)/60)+'m';
+      return~~(s/86400)+'d '+~~((s%86400)/3600)+'h';
+    }
+    async function poll(){
+      try{
+        const d=await(await fetch('/api/status')).json();
+        $('dot').className='dot '+(d.ok?'ok':'err');
+        $('st').textContent=d.ok?'Online':'Warning';
+        $('cnt').textContent=d.tunnels;$('up').textContent=fmt(d.uptime);
+        $('cpu').textContent=d.cpu_count+' vCPU';
+        $('ram').textContent=Math.round(d.memory.used_mb)+'/'+Math.round(d.memory.limit_mb)+'M';
+      }catch{$('dot').className='dot err';$('st').textContent='Offline'}
+    }
+    poll();setInterval(poll,5000);
+  </script>
+</body>
+</html>

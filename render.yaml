@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: esp32-tunnel
+    runtime: python
+    rootDir: python
+    buildCommand: pip install uv && uv sync --active
+    startCommand: uv run --active main.py
+    envVars:
+      - key: PORT
+        value: "8000"
