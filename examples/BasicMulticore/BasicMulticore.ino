@@ -30,7 +30,7 @@
 #define WIFI_PASS "YOUR_PASS"
 
 // ── Provider (pick one) ──────────────────────────────────────
-#define TUNNEL_SERVER "https://esp32-tunnel.onrender.com/my-device"
+#define TUNNEL_SERVER "https://esp32-tunnel-waa0.onrender.com/my-device"
 
 // ─────────────────────────────────────────────────────────────
 
