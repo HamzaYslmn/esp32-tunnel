@@ -9,6 +9,7 @@
 TunnelHandler	KEYWORD1
 TunnelProvider	KEYWORD1
 TunnelMode	KEYWORD1
+RouteConfig	KEYWORD1
 
 #######################################
 # Methods and Functions (KEYWORD2)
@@ -16,10 +17,12 @@ TunnelMode	KEYWORD1
 
 tunnelSetup	KEYWORD2
 tunnelStop	KEYWORD2
+tunnelLoop	KEYWORD2
 tunnelURL	KEYWORD2
 tunnelReady	KEYWORD2
 tunnelProviderName	KEYWORD2
 tunnelLastIP	KEYWORD2
+tunnelCACert	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)
@@ -27,6 +30,7 @@ tunnelLastIP	KEYWORD2
 
 LOCALTUNNEL	LITERAL1
 SELFHOST	LITERAL1
+BORE	LITERAL1
 TUN_STRICT	LITERAL1
 TUN_FLEX	LITERAL1
 TUN_WS_PATH	LITERAL1

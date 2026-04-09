@@ -6,6 +6,8 @@
  *   tunnelSetup(SELFHOST, "https://myserver.com/my-device");
  *   tunnelSetup(SELFHOST, "http://myserver.local/my-device");
  *   tunnelSetup(LOCALTUNNEL, "my-esp32");
+ *   tunnelSetup(BORE);                                // bore.pub random port
+ *   tunnelSetup(BORE, "my-server.com");               // self-hosted bore
  */
 
 #ifndef ESP32TUNNEL_H
@@ -43,7 +45,7 @@ static const char* _httpStatus(int c) {
 // Shared types & config
 // ---------------------------------------------------------------------------
 
-enum TunnelProvider { SELFHOST, LOCALTUNNEL };
+enum TunnelProvider { SELFHOST, LOCALTUNNEL, BORE };
 enum TunnelMode { TUN_STRICT, TUN_FLEX };
 
 typedef String (*TunnelHandler)(const String &method, const String &path);
@@ -312,6 +314,7 @@ static String _readLocalBody(WiFiClient &local, int contentLen) {
 
 #include "esp32tunnel_selfhosted.h"
 #include "esp32tunnel_localtunnel.h"
+#include "esp32tunnel_bore.h"
 
 // ---------------------------------------------------------------------------
 // MARK: Active provider tracker
@@ -328,8 +331,9 @@ static TunnelProvider _tunProvider = SELFHOST;
 inline void tunnelSetup(TunnelProvider p, TunnelHandler handler,
                         const char *option, TunnelMode mode = TUN_FLEX) {
   _tunProvider = p;
-  if (p == SELFHOST) _shBegin(handler, option);
-  else               _ltBegin(handler, option, mode);
+  if (p == SELFHOST)      _shBegin(handler, option);
+  else if (p == BORE)     _boreBegin(option, TUN_PORT);
+  else                    _ltBegin(handler, option, mode);
 }
 
 inline void tunnelSetup(TunnelProvider p, const char *option) {
@@ -367,31 +371,41 @@ inline void tunnelSetup(TunnelProvider p, const char *option, const RouteConfig 
 
 inline void tunnelLoop(bool log = false) {
   _tunAutoLog = log;
-  if (_tunProvider == SELFHOST) _shLoop();
-  else                         _ltLoop();
+  if (_tunProvider == SELFHOST)      _shLoop();
+  else if (_tunProvider == BORE)     _boreLoop();
+  else                               _ltLoop();
 }
 
 inline void tunnelStop() {
-  if (_tunProvider == SELFHOST) _shStop();
-  else                         _ltStop();
+  if (_tunProvider == SELFHOST)      _shStop();
+  else if (_tunProvider == BORE)     _boreStop();
+  else                               _ltStop();
 }
 
 // MARK: Status getters
 
 inline String tunnelURL() {
-  return (_tunProvider == SELFHOST) ? _sh.url : _lt.url;
+  if (_tunProvider == SELFHOST) return _sh.url;
+  if (_tunProvider == BORE)     return _bore.url;
+  return _lt.url;
 }
 
 inline bool tunnelReady() {
-  return (_tunProvider == SELFHOST) ? _sh.ready : _lt.ready;
+  if (_tunProvider == SELFHOST) return _sh.ready;
+  if (_tunProvider == BORE)     return _bore.ready;
+  return _lt.ready;
 }
 
 inline String tunnelLastIP() {
-  return (_tunProvider == SELFHOST) ? _sh.lastIP : _lt.lastIP;
+  if (_tunProvider == SELFHOST) return _sh.lastIP;
+  if (_tunProvider == BORE)     return _bore.lastIP;
+  return _lt.lastIP;
 }
 
 inline const char* tunnelProviderName() {
-  return (_tunProvider == SELFHOST) ? "self-hosted" : "localtunnel";
+  if (_tunProvider == SELFHOST) return "self-hosted";
+  if (_tunProvider == BORE)     return "bore";
+  return "localtunnel";
 }
 
 // MARK: Optional TLS cert verification (self-hosted provider only)

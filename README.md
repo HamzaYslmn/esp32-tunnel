@@ -6,13 +6,14 @@
 
 Expose your ESP32 web server to the public internet — no port forwarding, no ngrok, no cloud accounts, no companion devices.
 
-Two providers (pick one):
+Three providers (pick one):
 - **Self-hosted** (default) — plain WebSocket relay, no TLS on ESP32, saves ~40 KB RAM
 - **[localtunnel](https://localtunnel.me)** — free HTTPS subdomain URLs (uses WiFiClientSecure)
+- **[bore](https://github.com/ekzhang/bore)** — free TCP tunnel via bore.pub (no login, no account, no TLS)
 
 ## Features
 
-- **Unified API** — `tunnelSetup(SELFHOST, ...)` or `tunnelSetup(LOCALTUNNEL, ...)`
+- **Unified API** — `tunnelSetup(SELFHOST, ...)` or `tunnelSetup(LOCALTUNNEL, ...)` or `tunnelSetup(BORE)`
 - **No WiFiClientSecure for self-hosted** — plain WiFiClient, ~40 KB less RAM
 - **ESPAsyncWebServer compatible** — forwards requests to localhost (local proxy)
 - **Handler mode** — optional callback for direct request handling (no proxy)
@@ -27,7 +28,7 @@ Two providers (pick one):
 
 Automatically installed:
 - **[espfetch](https://github.com/HamzaYslmn/espfetch)** — neofetch-style system info + ESPLogger
-- **[esp-rtosSerial](https://github.com/HamzaYslmn/esp-rtosSerial)** — thread-safe Serial for FreeRTOS
+- **[esp-rtosSerial](https://github.com/HamzaYslmn/esp-rtosSerial)** — thread-safe Serial for FreeRTOS (`#include <rtosSerial.h>`)
 
 ## Installation
 
@@ -44,7 +45,7 @@ Download ZIP → **Sketch → Include Library → Add .ZIP Library**
 
 ## Quick Start
 
-### Self-hosted (default — lightweight, no TLS)
+### Self-hosted (default — lightweight, no TLS on ESP)
 
 ```cpp
 #include <ESPAsyncWebServer.h>
@@ -54,7 +55,7 @@ Download ZIP → **Sketch → Include Library → Add .ZIP Library**
 AsyncWebServer server(80);
 
 void setup() {
-  rtosSerial.begin(115200);
+  Serial.begin(115200);
   WiFi.begin("SSID", "PASS");
   while (WiFi.status() != WL_CONNECTED) delay(500);
 
@@ -69,18 +70,17 @@ void setup() {
 void loop() { tunnelLoop(); }
 ```
 
-### Localtunnel (no server needed)
+### Localtunnel (free HTTPS — no server needed)
 
 ```cpp
 #include <ESPAsyncWebServer.h>
-#define TUN_LOCALTUNNEL
 #include <esp32tunnel.h>
 #include <esp32tunnel_testpage.h>
 
 AsyncWebServer server(80);
 
 void setup() {
-  rtosSerial.begin(115200);
+  Serial.begin(115200);
   WiFi.begin("SSID", "PASS");
   while (WiFi.status() != WL_CONNECTED) delay(500);
 
@@ -95,9 +95,34 @@ void setup() {
 void loop() { tunnelLoop(); }
 ```
 
+### Bore (free TCP tunnel — no login, no account)
+
+```cpp
+#include <ESPAsyncWebServer.h>
+#include <esp32tunnel.h>
+#include <esp32tunnel_testpage.h>
+
+AsyncWebServer server(80);
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin("SSID", "PASS");
+  while (WiFi.status() != WL_CONNECTED) delay(500);
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *r) {
+    r->send(200, "text/html", TUN_TEST_HTML);
+  });
+  server.begin();
+
+  tunnelSetup(BORE);  // public URL: http://bore.pub:PORT
+}
+
+void loop() { tunnelLoop(); }
+```
+
 ## API
 
-Both providers expose the same public API:
+All providers expose the same public API:
 
 | Function | Description |
 |---|---|
@@ -107,14 +132,15 @@ Both providers expose the same public API:
 | `tunnelURL()` | Public URL or `"(connecting...)"` |
 | `tunnelReady()` | `true` when tunnel is live |
 | `tunnelLastIP()` | Last requester's IP address |
-| `tunnelProviderName()` | `"self-hosted"` or `"localtunnel"` |
+| `tunnelProviderName()` | `"self-hosted"`, `"localtunnel"`, or `"bore"` |
 
 ### Self-hosted `tunnelSetup()`
 
 ```cpp
-tunnelSetup(SELFHOST, "host/device-id");           // port 80 (local proxy)
-tunnelSetup(SELFHOST, "host:8000/device-id");      // custom port
+tunnelSetup(SELFHOST, "host/device-id");           // proxy mode (local port 80)
 tunnelSetup(SELFHOST, handler, "host/device-id");  // handler callback (no proxy)
+tunnelSetup(SELFHOST, "host/device-id", "pass");   // global password (?key=pass)
+tunnelSetup(SELFHOST, "host/device-id", routes);   // per-route auth
 ```
 
 ### Localtunnel `tunnelSetup()`
@@ -122,21 +148,29 @@ tunnelSetup(SELFHOST, handler, "host/device-id");  // handler callback (no proxy
 ```cpp
 tunnelSetup(LOCALTUNNEL);                            // random subdomain
 tunnelSetup(LOCALTUNNEL, "my-esp32");                // custom subdomain
-tunnelSetup(LOCALTUNNEL, "my-esp32", TUN_STRICT);    // fail if taken
-tunnelSetup(LOCALTUNNEL, handler, "my-esp32");       // with handler callback
+tunnelSetup(LOCALTUNNEL, "my-esp32", TUN_STRICT);    // fail if subdomain is taken
+tunnelSetup(LOCALTUNNEL, handler, "my-esp32");       // handler callback
+```
+
+### Bore `tunnelSetup()`
+
+```cpp
+tunnelSetup(BORE);                                   // bore.pub, random port
+tunnelSetup(BORE, "your-server.com");                // self-hosted bore server
 ```
 
 ## Providers
 
-| | Self-hosted | localtunnel |
-|---|---|---|
-| Include | `#include <esp32tunnel.h>` | `#define TUN_LOCALTUNNEL` + `#include <esp32tunnel.h>` |
-| TLS on ESP32 | ❌ (plain WS) | ✅ (WiFiClientSecure) |
-| RAM saved | ~40 KB less | — |
-| URL format | `http://host/device-id` | `https://xxx.loca.lt` |
-| Protocol | WebSocket relay | TCP pool |
-| Custom name | ✅ path-based | ✅ subdomain |
-| Needs server | ✅ | ❌ |
+| | Self-hosted | localtunnel | bore |
+|---|---|---|---|
+| Enum | `SELFHOST` | `LOCALTUNNEL` | `BORE` |
+| TLS on ESP32 | ❌ (plain WS) | ✅ (WiFiClientSecure) | ❌ (plain TCP) |
+| RAM usage | Low (~40 KB less) | Higher (TLS) | Low |
+| URL format | `http://host/device-id` | `https://xxx.loca.lt` | `http://bore.pub:PORT` |
+| Protocol | WebSocket relay | TCP pool | TCP tunnel |
+| Custom name | ✅ path-based | ✅ subdomain | ❌ random port |
+| Needs server | ✅ | ❌ | ❌ (bore.pub free) |
+| Account needed | ❌ | ❌ | ❌ |
 
 ## Self-Hosted Server
 
@@ -196,15 +230,30 @@ Override **before** `#include`:
 
 ## How It Works
 
+### Self-hosted
+```
+Browser → your-server (HTTPS) → WebSocket → ESP32 → JSON response → back
+```
+
 ### localtunnel
 ```
 Browser → loca.lt (HTTPS) → TCP pool → ESP32 → HTTP response → back
 ```
 
-### self-hosted
+### bore
 ```
-Browser → your-server (HTTPS) → WebSocket → ESP32 → JSON response → back
+Browser → bore.pub:PORT (HTTP) → TCP tunnel → ESP32 localhost:80 → back
 ```
+
+## Examples
+
+| Example | Description |
+|---|---|
+| [SelfHosted](examples/SelfHosted) | Full-featured self-hosted relay (auth, TLS, handler) |
+| [Localtunnel](examples/Localtunnel) | Free HTTPS URL via localtunnel.me |
+| [Bore](examples/Bore) | Free TCP tunnel via bore.pub (no login) |
+| [HandlerMode](examples/HandlerMode) | Direct request handling (no AsyncWebServer) |
+| [DualCore](examples/DualCore) | ESP32 FreeRTOS task on dedicated core |
 
 ## Companion Libraries
 
