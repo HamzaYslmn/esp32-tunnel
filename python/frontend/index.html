@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>esp32-tunnel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/p2p.js"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-200 min-h-screen flex items-center justify-center p-4 font-sans">
+  <main class="w-full max-w-md space-y-4">
+    <header class="text-center">
+      <h1 class="text-2xl font-bold text-orange-400">⚡ esp32-tunnel</h1>
+    </header>
+
+    <!-- Top-level views -->
+    <nav id="views" class="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1 text-sm"></nav>
+
+    <!-- ───────── Device view ───────── -->
+    <div id="view-device" class="space-y-4">
+      <section class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+        <div class="flex gap-2">
+          <input id="id" value="p2ptest" placeholder="device id"
+            class="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none">
+          <button id="refresh" class="px-3 rounded-lg border border-zinc-800 hover:border-orange-500 text-sm">↻</button>
+        </div>
+        <input id="key" type="password" placeholder="access key (public devices: leave blank)"
+          class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none font-mono">
+        <div class="flex items-center gap-2">
+          <span id="dot" class="w-2.5 h-2.5 rounded-full bg-zinc-600"></span>
+          <span id="state" class="text-sm font-medium text-zinc-400">checking…</span>
+          <span id="state_ms" class="ml-auto text-xs text-zinc-500"></span>
+        </div>
+        <pre id="state_body" class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs overflow-auto max-h-28 whitespace-pre-wrap break-words text-zinc-400"></pre>
+      </section>
+
+      <section class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        <nav id="tabs" class="flex border-b border-zinc-800 text-sm"></nav>
+        <div class="p-4 space-y-3">
+          <p id="tabhint" class="text-xs text-zinc-500"></p>
+          <div class="flex gap-2">
+            <select id="method" class="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-2 text-sm focus:border-orange-500 outline-none">
+              <option>GET</option><option>POST</option>
+            </select>
+            <input id="path" value="/status" placeholder="/path"
+              class="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-orange-500 outline-none">
+            <button id="send" class="bg-orange-500 hover:bg-orange-400 text-zinc-950 font-semibold rounded-lg px-4 text-sm transition disabled:opacity-50">Send</button>
+          </div>
+          <div id="result" class="hidden space-y-2">
+            <div class="flex items-center gap-2 text-sm">
+              <span id="status" class="font-mono font-bold"></span>
+              <span id="via" class="ml-auto text-xs font-semibold px-2 py-0.5 rounded-full"></span>
+              <span id="ms" class="text-xs text-zinc-500"></span>
+            </div>
+            <pre id="body" class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs overflow-auto max-h-60 whitespace-pre-wrap break-words"></pre>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ───────── Server view ───────── -->
+    <div id="view-server" class="hidden space-y-4">
+      <section class="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4 text-center">
+        <span id="srv_pill" class="inline-flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-full px-3 py-1 text-sm">
+          <span id="srv_dot" class="w-2 h-2 rounded-full bg-zinc-600"></span><span id="srv_state">…</span>
+        </span>
+        <div class="grid grid-cols-2 gap-3 text-left">
+          <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">Active tunnels</div>
+            <div id="srv_tunnels" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">Uptime</div>
+            <div id="srv_uptime" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">CPU</div>
+            <div id="srv_cpu" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="bg-zinc-950 border border-zinc-800 rounded-lg p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">RAM</div>
+            <div id="srv_ram" class="text-2xl font-bold mt-1">—</div>
+          </div>
+        </div>
+        <div class="text-sm text-orange-400 space-x-3">
+          <a href="https://github.com/HamzaYslmn/esp32-tunnel" target="_blank" class="hover:underline">GitHub</a>
+          <span class="text-zinc-700">·</span>
+          <a href="/docs" target="_blank" class="hover:underline">API</a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const origin = location.origin;
+    const key = () => $('key').value.trim();
+    const hdr = () => key() ? { 'X-Tunnel-Key': key() } : {};
+    const devs = {};                       // espTunnel instance per id+key (keeps P2P channel)
+    const tunnel = id => devs[id + '|' + key()] ||= espTunnel(origin, id, { key: key() });
+
+    // ── Top-level views ──
+    const VIEWS = { device: 'Device', server: 'Server' };
+    let view = 'device';
+    function renderViews() {
+      $('views').innerHTML = '';
+      for (const [k, label] of Object.entries(VIEWS)) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.className = 'flex-1 py-1.5 rounded-lg font-medium ' +
+          (k === view ? 'bg-zinc-800 text-orange-400' : 'text-zinc-500 hover:text-zinc-300');
+        b.onclick = () => {
+          view = k; renderViews();
+          $('view-device').classList.toggle('hidden', k !== 'device');
+          $('view-server').classList.toggle('hidden', k !== 'server');
+          if (k === 'server') loadServer();
+        };
+        $('views').appendChild(b);
+      }
+    }
+
+    // ── Server view ──
+    const fmtUptime = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s/60)}m`
+      : s < 86400 ? `${Math.floor(s/3600)}h` : `${Math.floor(s/86400)}d`;
+    async function loadServer() {
+      try {
+        const s = await (await fetch(`${origin}/api/status`)).json();
+        $('srv_dot').className = 'w-2 h-2 rounded-full ' + (s.ok ? 'bg-green-500' : 'bg-amber-500');
+        $('srv_state').textContent = s.ok ? 'Online' : 'Degraded';
+        $('srv_tunnels').textContent = s.tunnels;
+        $('srv_uptime').textContent = fmtUptime(s.uptime);
+        $('srv_cpu').textContent = `${s.cpu_count} vCPU`;
+        $('srv_ram').textContent = `${Math.round(s.memory.used_mb)}/${Math.round(s.memory.limit_mb)}M`;
+      } catch {
+        $('srv_dot').className = 'w-2 h-2 rounded-full bg-red-500';
+        $('srv_state').textContent = 'Unreachable';
+      }
+    }
+
+    // ── Device view: connection methods (each returns {status, body, via}) ──
+    const METHODS = {
+      p2p: { label: 'P2P', hint: 'WebRTC DataChannel, direct to device (falls back to relay).',
+        send: (id, path, m) => tunnel(id).fetch(path, { method: m }) },
+      ws:  { label: 'WS', hint: 'WebSocket relay through the server.',
+        send: async (id, path, m) => {
+          const res = await fetch(`${origin}/${id}${path.startsWith('/') ? '' : '/'}${path}`, { method: m, headers: hdr() });
+          return { status: res.status, body: await res.text(), via: 'ws' };
+        } },
+    };
+    let active = 'p2p';
+    const VIA = { p2p: 'bg-green-500/15 text-green-400', relay: 'bg-amber-500/15 text-amber-400', ws: 'bg-sky-500/15 text-sky-400' };
+
+    function renderTabs() {
+      $('tabs').innerHTML = '';
+      for (const [k, m] of Object.entries(METHODS)) {
+        const b = document.createElement('button');
+        b.textContent = m.label;
+        b.className = 'flex-1 py-2.5 font-medium ' +
+          (k === active ? 'text-orange-400 border-b-2 border-orange-400' : 'text-zinc-500 hover:text-zinc-300');
+        b.onclick = () => { active = k; renderTabs(); $('tabhint').textContent = m.hint; $('result').classList.add('hidden'); };
+        $('tabs').appendChild(b);
+      }
+      $('tabhint').textContent = METHODS[active].hint;
+    }
+
+    async function refresh() {
+      const id = $('id').value.trim();
+      $('dot').className = 'w-2.5 h-2.5 rounded-full bg-zinc-600';
+      $('state').textContent = 'checking…'; $('state').className = 'text-sm font-medium text-zinc-400';
+      $('state_ms').textContent = ''; $('state_body').textContent = '';
+      const t0 = performance.now();
+      try {
+        const res = await fetch(`${origin}/${id}/status`, { headers: hdr() });
+        const ms = Math.round(performance.now() - t0);
+        const ok = res.ok;
+        $('dot').className = 'w-2.5 h-2.5 rounded-full ' + (ok ? 'bg-green-500' : 'bg-red-500');
+        $('state').textContent = ok ? 'Online' : `Unreachable (${res.status})`;
+        $('state').className = 'text-sm font-medium ' + (ok ? 'text-green-400' : 'text-red-400');
+        $('state_ms').textContent = ms + ' ms';
+        $('state_body').textContent = await res.text();
+      } catch (e) {
+        $('dot').className = 'w-2.5 h-2.5 rounded-full bg-red-500';
+        $('state').textContent = 'Offline'; $('state').className = 'text-sm font-medium text-red-400';
+        $('state_body').textContent = String(e);
+      }
+    }
+
+    async function send() {
+      const id = $('id').value.trim(), path = $('path').value.trim() || '/', method = $('method').value;
+      $('send').disabled = true;
+      try {
+        const t0 = performance.now();
+        const r = await METHODS[active].send(id, path, method);
+        const ms = Math.round(performance.now() - t0);
+        const ok = r.status >= 200 && r.status < 400;
+        $('status').textContent = r.status;
+        $('status').className = 'font-mono font-bold ' + (ok ? 'text-green-400' : 'text-red-400');
+        $('via').textContent = (r.via || active).toUpperCase();
+        $('via').className = 'ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ' + (VIA[r.via] || VIA.ws);
+        $('ms').textContent = ms + ' ms';
+        $('body').textContent = r.body || '(empty)';
+      } catch (e) {
+        $('status').textContent = 'ERR'; $('status').className = 'font-mono font-bold text-red-400';
+        $('via').textContent = ''; $('ms').textContent = ''; $('body').textContent = String(e);
+      }
+      $('result').classList.remove('hidden');
+      $('send').disabled = false;
+    }
+
+    renderViews();
+    renderTabs();
+    $('send').onclick = send;
+    $('refresh').onclick = refresh;
+    $('id').onchange = refresh;
+    $('key').onchange = refresh;
+    refresh();
+  </script>
+</body>
+</html>

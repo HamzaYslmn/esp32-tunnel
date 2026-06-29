@@ -11,10 +11,11 @@
 // ponytail: non-trickle ICE (gather-then-send) — ~1-2s slower setup, far less code
 // than trickle signaling. STUN only; no TURN, so symmetric NAT falls back to relay.
 
-function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302' } = {}) {
+function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302', key = '' } = {}) {
   let chan = null, connecting = null;
   const waiters = new Map();
   let seq = 0;
+  const auth = key ? { 'X-Tunnel-Key': key } : {};   // device access key
 
   async function connect() {
     const pc = new RTCPeerConnection({ iceServers: [{ urls: stun }] });
@@ -35,7 +36,7 @@ function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302' } = {}) {
     });
 
     const res = await fetch(`${server}/api/tunnel/${id}/_signal`, {
-      method: 'POST', body: pc.localDescription.sdp,
+      method: 'POST', body: pc.localDescription.sdp, headers: auth,
     });
     if (!res.ok) throw new Error('signal ' + res.status);  // 501 = device P2P off -> fallback
     await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
@@ -54,7 +55,8 @@ function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302' } = {}) {
   }
 
   async function relay(path, opts = {}) {
-    const r = await fetch(`${server}/${id}${path.startsWith('/') ? '' : '/'}${path}`, opts);
+    const r = await fetch(`${server}/${id}${path.startsWith('/') ? '' : '/'}${path}`,
+      { ...opts, headers: { ...auth, ...opts.headers } });
     return { status: r.status, body: await r.text(), type: r.headers.get('content-type') || '', via: 'relay' };
   }
 

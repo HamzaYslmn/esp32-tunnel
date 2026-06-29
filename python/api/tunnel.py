@@ -7,6 +7,7 @@ ESP32 connects via WebSocket, visitors access via HTTP proxy.
 """
 
 import asyncio
+import hmac
 import json
 import re
 import time
@@ -31,13 +32,14 @@ _FORWARD_HEADERS = ("authorization", "cookie", "user-agent", "accept", "accept-l
 
 # MARK: Tunnel — isolates per-connection state
 class Tunnel:
-    __slots__ = ("ws", "routes", "_locked", "pending")
+    __slots__ = ("ws", "routes", "_locked", "pending", "token")
 
-    def __init__(self, ws: WebSocket):
+    def __init__(self, ws: WebSocket, token: str = ""):
         self.ws = ws
         self.routes: list[dict] = []
         self._locked = False
         self.pending: dict[str, asyncio.Future] = {}
+        self.token = token   # device access key; "" = open (no auth)
 
     def lock_config(self, routes: list) -> bool:
         if self._locked:
@@ -99,14 +101,29 @@ def _clean_grace():
         del _grace[k]
 
 
+# MARK: Auth — visitor must present the device's key in the X-Tunnel-Key header.
+# No key on the device (public mode) = no check. Constant-time compare.
+def _authorize(tun: Tunnel, request: Request):
+    if not tun.token:
+        return
+    if not hmac.compare_digest(request.headers.get("x-tunnel-key", ""), tun.token):
+        raise HTTPException(401, "Unauthorized")
+
+
 # MARK: WebSocket endpoint — ESP32 connects here
 @router.websocket("/tunnel/ws")
-async def tunnel_ws(ws: WebSocket, id: str):
+async def tunnel_ws(ws: WebSocket, id: str, token: str = ""):
     if not _VALID_ID.match(id):
         await ws.close(4000, "invalid id")
         return
 
     await ws.accept()
+
+    # Don't let a wrong key hijack a live device that claimed this id with a key.
+    old = tunnels.get(id)
+    if old and old.token and not hmac.compare_digest(token, old.token):
+        await ws.close(4003, "id in use")
+        return
 
     old = tunnels.pop(id, None)
     if old:
@@ -116,7 +133,7 @@ async def tunnel_ws(ws: WebSocket, id: str):
             pass
         old.cancel_pending()
 
-    tun = Tunnel(ws)
+    tun = Tunnel(ws, token)
     tunnels[id] = tun
     _grace.pop(id, None)
     log.info(f"[tunnel] + {id} ({len(tunnels)} active)")
@@ -176,6 +193,7 @@ async def tunnel_signal(tid: str, request: Request):
     tun = tunnels.get(tid)
     if not tun:
         raise HTTPException(404, "Tunnel not found")
+    _authorize(tun, request)
 
     offer = (await request.body()).decode("utf-8", "replace")
     if not offer or len(offer) > MAX_BODY_LEN:
@@ -203,8 +221,9 @@ async def tunnel_proxy(tid: str, path: str = "", request: Request = None):
 
     safe = _safe_path("/" + path if path else "/")
 
-    # MARK: Route auth
-    key = request.query_params.get("key", "") if request else ""
+    # MARK: Auth — device key (X-Tunnel-Key header) + per-route RouteConfig
+    _authorize(tun, request)
+    key = request.headers.get("x-tunnel-key", "")
     if not tun.check_route(safe, key):
         raise HTTPException(403, "Access denied")
 
