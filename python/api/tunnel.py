@@ -147,8 +147,27 @@ async def tunnel_ws(ws: WebSocket, id: str):
         log.info(f"[tunnel] - {id} ({len(tunnels)} active)")
 
 
-# MARK: P2P signaling — broker one SDP offer/answer, then get out of the way
-# Reuses tun.pending: forward offer over the existing WS, await the device's answer.
+# MARK: WS request/response — send msg to the device, await its reply (by id).
+# Shared by the HTTP proxy and P2P signaling. Raises 502 if the device is gone;
+# lets asyncio.TimeoutError propagate so callers can pick their own timeout text.
+async def _rpc(tid: str, tun: Tunnel, msg: dict) -> dict:
+    rid = msg["id"] = str(uuid.uuid4())
+    fut = asyncio.get_running_loop().create_future()
+    tun.pending[rid] = fut
+    try:
+        try:
+            await tun.ws.send_json(msg)
+        except Exception:
+            if tunnels.get(tid) is tun:
+                del tunnels[tid]
+            _grace[tid] = time.time()
+            raise HTTPException(502, "Device disconnected")
+        return await asyncio.wait_for(fut, timeout=TIMEOUT)
+    finally:
+        tun.pending.pop(rid, None)
+
+
+# MARK: P2P signaling — broker one SDP offer/answer, then get out of the way.
 # After this the browser talks straight to the ESP32 (WebRTC DataChannel) — no relay.
 @router.post("/tunnel/{tid}/_signal")
 async def tunnel_signal(tid: str, request: Request):
@@ -162,24 +181,13 @@ async def tunnel_signal(tid: str, request: Request):
     if not offer or len(offer) > MAX_BODY_LEN:
         raise HTTPException(413, "Bad offer")
 
-    rid = str(uuid.uuid4())
-    fut = asyncio.get_running_loop().create_future()
-    tun.pending[rid] = fut
     try:
-        await tun.ws.send_json({"type": "webrtc", "id": rid, "sdp": offer})
-        r = await asyncio.wait_for(fut, timeout=TIMEOUT)
-        sdp = r.get("sdp", "")
-        if not sdp:
-            raise HTTPException(501, "P2P not enabled on device")  # browser falls back to relay
-        return Response(sdp, media_type="application/sdp")
+        r = await _rpc(tid, tun, {"type": "webrtc", "sdp": offer})
     except asyncio.TimeoutError:
         raise HTTPException(504, "P2P signaling timeout")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(502, "Device disconnected")
-    finally:
-        tun.pending.pop(rid, None)
+    if not r.get("sdp"):
+        raise HTTPException(501, "P2P not enabled on device")  # browser falls back to relay
+    return Response(r["sdp"], media_type="application/sdp")
 
 
 # MARK: HTTP proxy — visitors access ESP32 through this
@@ -200,51 +208,27 @@ async def tunnel_proxy(tid: str, path: str = "", request: Request = None):
     if not tun.check_route(safe, key):
         raise HTTPException(403, "Access denied")
 
-    ip = _client_ip(request)
-    body_str = ""
-    ct = ""
+    msg = {"method": request.method, "path": safe, "ip": _client_ip(request)}
     if request.method in ("POST", "PUT", "PATCH"):
         body_bytes = await request.body()
         if body_bytes and len(body_bytes) <= MAX_BODY_LEN:
-            body_str = body_bytes.decode("utf-8", errors="replace")
+            msg["body"] = body_bytes.decode("utf-8", errors="replace")
         ct = request.headers.get("content-type", "")
-
-    rid = str(uuid.uuid4())
-    fut = asyncio.get_running_loop().create_future()
-    tun.pending[rid] = fut
-
-    try:
-        msg = {"id": rid, "method": request.method, "path": safe, "ip": ip}
-        if body_str:
-            msg["body"] = body_str
         if ct:
             msg["ct"] = ct
-        hdrs = _pick_headers(request)
-        if hdrs:
-            msg["hdrs"] = hdrs
+    hdrs = _pick_headers(request)
+    if hdrs:
+        msg["hdrs"] = hdrs
 
-        try:
-            await tun.ws.send_json(msg)
-        except Exception:
-            if tunnels.get(tid) is tun:
-                del tunnels[tid]
-            _grace[tid] = time.time()
-            raise HTTPException(502, "Device disconnected")
-
-        r = await asyncio.wait_for(fut, timeout=TIMEOUT)
-        resp_body = r.get("body", "")
-        if len(resp_body) > MAX_BODY_LEN:
-            resp_body = resp_body[:MAX_BODY_LEN]
-        return Response(
-            resp_body,
-            status_code=r.get("status", 200),
-            media_type=r.get("type", "text/html; charset=utf-8"),
-        )
+    try:
+        r = await _rpc(tid, tun, msg)
     except asyncio.TimeoutError:
         raise HTTPException(504, "Device timeout")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(502, "Tunnel error")
-    finally:
-        tun.pending.pop(rid, None)
+    resp_body = r.get("body", "")
+    if len(resp_body) > MAX_BODY_LEN:
+        resp_body = resp_body[:MAX_BODY_LEN]
+    return Response(
+        resp_body,
+        status_code=r.get("status", 200),
+        media_type=r.get("type", "text/html; charset=utf-8"),
+    )
