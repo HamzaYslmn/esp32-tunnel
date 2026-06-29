@@ -147,6 +147,41 @@ async def tunnel_ws(ws: WebSocket, id: str):
         log.info(f"[tunnel] - {id} ({len(tunnels)} active)")
 
 
+# MARK: P2P signaling — broker one SDP offer/answer, then get out of the way
+# Reuses tun.pending: forward offer over the existing WS, await the device's answer.
+# After this the browser talks straight to the ESP32 (WebRTC DataChannel) — no relay.
+@router.post("/tunnel/{tid}/_signal")
+async def tunnel_signal(tid: str, request: Request):
+    if not _VALID_ID.match(tid):
+        raise HTTPException(400, "Invalid tunnel ID")
+    tun = tunnels.get(tid)
+    if not tun:
+        raise HTTPException(404, "Tunnel not found")
+
+    offer = (await request.body()).decode("utf-8", "replace")
+    if not offer or len(offer) > MAX_BODY_LEN:
+        raise HTTPException(413, "Bad offer")
+
+    rid = str(uuid.uuid4())
+    fut = asyncio.get_running_loop().create_future()
+    tun.pending[rid] = fut
+    try:
+        await tun.ws.send_json({"type": "webrtc", "id": rid, "sdp": offer})
+        r = await asyncio.wait_for(fut, timeout=TIMEOUT)
+        sdp = r.get("sdp", "")
+        if not sdp:
+            raise HTTPException(501, "P2P not enabled on device")  # browser falls back to relay
+        return Response(sdp, media_type="application/sdp")
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "P2P signaling timeout")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, "Device disconnected")
+    finally:
+        tun.pending.pop(rid, None)
+
+
 # MARK: HTTP proxy — visitors access ESP32 through this
 async def tunnel_proxy(tid: str, path: str = "", request: Request = None):
     if not _VALID_ID.match(tid):

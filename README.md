@@ -141,7 +141,20 @@ tunnelSetup(SELFHOST, "host/device-id");           // proxy mode (local port 80)
 tunnelSetup(SELFHOST, handler, "host/device-id");  // handler callback (no proxy)
 tunnelSetup(SELFHOST, "host/device-id", "pass");   // global password (?key=pass)
 tunnelSetup(SELFHOST, "host/device-id", routes);   // per-route auth
+tunnelP2P(answerFn);                               // opt-in WebRTC P2P (see below)
 ```
+
+#### P2P mode (offload traffic from your relay)
+
+By default the server relays every request/response (acts like an HTTP VPN). With
+`tunnelP2P()`, the server only brokers a WebRTC handshake and visitors connect
+**peer-to-peer** — your server stops carrying the traffic. Falls back to the relay
+automatically when P2P can't be established (symmetric NAT, P2P disabled).
+
+The WebRTC engine itself (ICE+DTLS+SCTP, e.g. [libpeer](https://github.com/sepfy/libpeer))
+is **not** bundled — it's the one piece that can't be header-only. You provide it in
+`answerFn`; the library does the signaling. Browser side loads `https://yourserver/p2p.js`.
+See [`examples/P2P`](examples/P2P/P2P.ino).
 
 ### Localtunnel `tunnelSetup()`
 

@@ -50,6 +50,12 @@ enum TunnelMode { TUN_STRICT, TUN_FLEX };
 
 typedef String (*TunnelHandler)(const String &method, const String &path);
 
+// MARK: P2P (WebRTC) signaling hook — return SDP answer for the given offer,
+// or "" to decline (browser then falls back to the relay). The WebRTC engine
+// (DTLS+SCTP DataChannel, e.g. libpeer) lives in the sketch, not this header.
+typedef String (*P2PSignalHandler)(const String &offerSdp);
+static P2PSignalHandler _p2pHandler = nullptr;
+
 static bool _tunAutoLog = false;
 
 // MARK: Route-based access control
@@ -366,6 +372,11 @@ inline void tunnelSetup(TunnelProvider p, const char *option, const RouteConfig 
   for (int i = 0; i < _tunRouteCount; i++) _tunRoutes[i] = routes[i];
   tunnelSetup(p, (TunnelHandler)nullptr, option, TUN_FLEX);
 }
+
+// MARK: tunnelP2P — register WebRTC engine (self-hosted mode only). When set,
+// the server brokers signaling and visitors connect peer-to-peer; your server
+// only relays the handshake, not the traffic. Unset = relay as before.
+inline void tunnelP2P(P2PSignalHandler handler) { _p2pHandler = handler; }
 
 // MARK: tunnelLoop / tunnelStop
 

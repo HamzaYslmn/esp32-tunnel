@@ -14,11 +14,13 @@ import pathlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from middleware import middleware, log
 
-_landing = (pathlib.Path(__file__).parent / "public" / "landing.html").read_text()
+_public = pathlib.Path(__file__).parent / "public"
+_landing = (_public / "landing.html").read_text()
+_p2p_js = (_public / "p2p.js").read_text()
 PORT = int(os.environ.get("PORT", 8000))
 
 
@@ -59,6 +61,12 @@ _include_all_routers("api", "/api")
 @app.get("/")
 async def landing():
     return HTMLResponse(_landing)
+
+
+# MARK: P2P browser client — see public/p2p.js
+@app.get("/p2p.js")
+async def p2p_js():
+    return Response(_p2p_js, media_type="application/javascript")
 
 
 # MARK: Catch-all proxy — /{tid} and /{tid}/{path} (after specific routes)
