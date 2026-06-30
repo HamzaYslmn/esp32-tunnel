@@ -12,7 +12,7 @@
 // than trickle signaling. STUN only; no TURN, so symmetric NAT falls back to relay.
 
 function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302', key = '' } = {}) {
-  let chan = null, connecting = null;
+  let chan = null, connecting = null, declined = false;   // declined: device has no P2P engine
   const waiters = new Map();
   let seq = 0;
   const auth = key ? { 'X-Tunnel-Key': key } : {};   // device access key
@@ -38,7 +38,10 @@ function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302', key = ''
     const res = await fetch(`${server}/api/tunnel/${id}/_signal`, {
       method: 'POST', body: pc.localDescription.sdp, headers: auth,
     });
-    if (!res.ok) throw new Error('signal ' + res.status);  // 501 = device P2P off -> fallback
+    // 501 = device has no P2P engine: remember it so we stop re-attempting and
+    // go straight to relay (one round-trip instead of handshake + relay).
+    if (res.status === 501) { declined = true; pc.close(); throw new Error('no p2p'); }
+    if (!res.ok) throw new Error('signal ' + res.status);
     await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
 
     await new Promise((ok, no) => {
@@ -49,6 +52,7 @@ function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302', key = ''
   }
 
   async function ensure() {
+    if (declined) return false;                          // known no-P2P device -> relay directly
     if (chan && chan.readyState === 'open') return true;
     if (!connecting) connecting = connect().finally(() => { connecting = null; });
     try { await connecting; return true; } catch { return false; }
