@@ -101,8 +101,7 @@ def _clean_grace():
         del _grace[k]
 
 
-# MARK: Auth — visitor presents the device key as ?key= (browser URLs) or the
-# X-Tunnel-Key header (programmatic). Public device (no key) = no check.
+# MARK: Auth — device key via ?key= or X-Tunnel-Key. No key on device = no check.
 def _req_key(request: Request) -> str:
     return (request.query_params.get("key")
             or request.query_params.get("x-tunnel-key")
@@ -168,9 +167,8 @@ async def tunnel_ws(ws: WebSocket, id: str, token: str = ""):
         log.info(f"[tunnel] - {id} ({len(tunnels)} active)")
 
 
-# MARK: WS request/response — send msg to the device, await its reply (by id).
-# Shared by the HTTP proxy and P2P signaling. Raises 502 if the device is gone;
-# lets asyncio.TimeoutError propagate so callers can pick their own timeout text.
+# MARK: WS request/response — send to the device, await its reply (by id).
+# Shared by proxy + signaling. 502 if the device is gone; TimeoutError propagates.
 async def _rpc(tid: str, tun: Tunnel, msg: dict) -> dict:
     rid = msg["id"] = str(uuid.uuid4())
     fut = asyncio.get_running_loop().create_future()
@@ -189,7 +187,6 @@ async def _rpc(tid: str, tun: Tunnel, msg: dict) -> dict:
 
 
 # MARK: P2P signaling — broker one SDP offer/answer, then get out of the way.
-# After this the browser talks straight to the ESP32 (WebRTC DataChannel) — no relay.
 @router.post("/tunnel/{tid}/_signal")
 async def tunnel_signal(tid: str, request: Request):
     if not _VALID_ID.match(tid):

@@ -66,7 +66,9 @@ void setup() {
   // p2p.js send it for you). For an open device instead, call tunnelPublic()
   // before tunnelSetup(); for a fixed key, tunnelSetup(SELFHOST, server, "pass").
   delay(500);
-  Serial.printf("Access key: %s\n", tunnelKey());
+  Serial.printf("Access key:  %s\n", tunnelKey());
+  Serial.printf("Public URL:  %s?key=%s\n", tunnelURL().c_str(), tunnelKey());
+  Serial.printf("Local URL:   %s/  (same WiFi, ~5ms, no server)\n", tunnelLocalURL().c_str());
 }
 
 void loop() {

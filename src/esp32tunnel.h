@@ -19,8 +19,10 @@
   #include <WiFi.h>
   #include <lwip/sockets.h>
   #include <Preferences.h>
+  #include <ESPmDNS.h>
 #elif defined(ESP8266)
   #include <ESP8266WiFi.h>
+  #include <ESP8266mDNS.h>
 #endif
 
 #include <WiFiClientSecure.h>
@@ -51,9 +53,8 @@ enum TunnelMode { TUN_STRICT, TUN_FLEX };
 
 typedef String (*TunnelHandler)(const String &method, const String &path);
 
-// MARK: P2P (WebRTC) signaling hook — return SDP answer for the given offer,
-// or "" to decline (browser then falls back to the relay). The WebRTC engine
-// (DTLS+SCTP DataChannel, e.g. libpeer) lives in the sketch, not this header.
+// MARK: P2P signaling hook — return an SDP answer, or "" to decline (-> relay).
+// The WebRTC engine (e.g. libpeer) lives in the sketch, not here.
 typedef String (*P2PSignalHandler)(const String &offerSdp);
 static P2PSignalHandler _p2pHandler = nullptr;
 
@@ -71,9 +72,8 @@ struct RouteConfig {
 static RouteConfig _tunRoutes[TUN_MAX_ROUTES];
 static int _tunRouteCount = 0;
 
-// MARK: Access key — secure by default. Auto-generated (ESP32 NVS, stable
-// across reboots) unless the sketch sets its own or opts out. Required on the
-// WS handshake (blocks id hijack) and on every visitor request (?key=/header).
+// MARK: Access key — secure by default. Auto-generated (NVS, persisted) unless
+// the sketch overrides; sent on the handshake and required on every request.
 static String _tunKey;            // "" = open access (insecure)
 static bool _tunAutoAuth = true;
 
@@ -106,6 +106,9 @@ static String _tunMakeKey() {
 #ifndef TUN_WS_PATH
 #define TUN_WS_PATH "/api/tunnel/ws"
 #endif
+#ifndef TUN_MDNS
+#define TUN_MDNS 1          // advertise http://<id>.local for direct LAN access
+#endif
 #ifndef TUN_POOL
 #define TUN_POOL 2
 #endif
@@ -116,8 +119,7 @@ static String _tunMakeKey() {
 #define TUN_REALLOC 12
 #endif
 
-// MARK: Background task (ESP32) — tunnelSetup() runs the tunnel in its own
-// FreeRTOS task, so no tunnelLoop() in loop() is needed. Tune if required.
+// MARK: Background task (ESP32) — tunnelSetup() runs the tunnel in its own task.
 #ifndef TUN_TASK_STACK
 #define TUN_TASK_STACK 8192      // proven enough for the WS + TLS path
 #endif
@@ -402,9 +404,7 @@ static inline void _tunStartTask() {
 inline void tunnelSetup(TunnelProvider p, TunnelHandler handler,
                         const char *option, TunnelMode mode = TUN_FLEX) {
   _tunProvider = p;
-  // MARK: Secure by default (self-hosted) — generate an access key unless the
-  // sketch set its own auth or opted out. Sent on the handshake; the server
-  // then requires it on every visitor request (see tunnelKey()).
+  // Secure by default — auto-generate a key unless the sketch set one or opted out.
   if (p == SELFHOST && !_tunKey.length() && _tunAutoAuth && !_tunRouteCount)
     _tunKey = _tunMakeKey();
   if (p == SELFHOST)      _shBegin(handler, option);
@@ -418,10 +418,8 @@ inline void tunnelSetup(TunnelProvider p, TunnelHandler handler,
 inline void tunnelSetup(TunnelProvider p, const char *option) {
   tunnelSetup(p, (TunnelHandler)nullptr, option, TUN_FLEX);
 }
-
-inline void tunnelSetup(TunnelProvider p, TunnelHandler handler, const char *option) {
-  tunnelSetup(p, handler, option, TUN_FLEX);
-}
+// (p, handler, option) uses the main overload's default mode — a separate
+// 3-arg version would make it ambiguous.
 
 inline void tunnelSetup(TunnelProvider p, const char *option, TunnelMode mode) {
   tunnelSetup(p, (TunnelHandler)nullptr, option, mode);
@@ -446,23 +444,27 @@ inline void tunnelSetup(TunnelProvider p, const char *option, const RouteConfig 
   tunnelSetup(p, (TunnelHandler)nullptr, option, TUN_FLEX);
 }
 
-// MARK: tunnelP2P — register WebRTC engine (self-hosted mode only). When set,
-// the server brokers signaling and visitors connect peer-to-peer; your server
-// only relays the handshake, not the traffic. Unset = relay as before.
+// MARK: tunnelP2P — register a WebRTC engine (self-hosted). Set = visitors go
+// peer-to-peer, server only brokers the handshake. Unset = relay.
 inline void tunnelP2P(P2PSignalHandler handler) { _p2pHandler = handler; }
 
-// MARK: Access control (call BEFORE tunnelSetup, self-hosted only)
-// Default = auto-generated key. tunnelPublic() = open access (e.g. host a public
-// website on an RPi). Custom password: tunnelSetup(SELFHOST, server, "mypass").
+// MARK: Access control (call BEFORE tunnelSetup). Default = auto key;
+// tunnelPublic() = open; custom = tunnelSetup(SELFHOST, server, "pass").
 inline void tunnelPublic() { _tunAutoAuth = false; _tunKey = ""; }
 inline const char* tunnelKey() { return _tunKey.c_str(); }
+
+// MARK: Direct LAN URL (http://<id>.local) — fastest path on the same network
+inline String tunnelLocalURL() {
+  if (_tunProvider != SELFHOST) return "";
+  String u = "http://" + _sh.id + ".local";
+  if (TUN_PORT != 80) { u += ":"; u += String(TUN_PORT); }
+  return u;
+}
 
 // MARK: tunnelLog — toggle access logging (replaces tunnelLoop(true))
 inline void tunnelLog(bool enable = true) { _tunAutoLog = enable; }
 
-// MARK: tunnelLoop — only needed on ESP8266 (no FreeRTOS task). On ESP32 the
-// background task already drives the tunnel, so this is a safe no-op (calling
-// it anyway won't double-drive the socket). Kept for backward compatibility.
+// MARK: tunnelLoop — ESP8266 only. On ESP32 the task drives it; this is a no-op.
 inline void tunnelLoop(bool log = false) {
   _tunAutoLog = log;
 #ifdef ESP32

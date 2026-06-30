@@ -299,6 +299,15 @@ static void _shParseOption() {
 static bool _shInit() {
   if (WiFi.status() != WL_CONNECTED) return false;
 
+  // MARK: mDNS — advertise http://<id>.local for direct LAN access (once)
+#if TUN_MDNS
+  static bool _mdnsUp = false;
+  if (!_mdnsUp && MDNS.begin(_sh.id.c_str())) {
+    MDNS.addService("http", "tcp", TUN_PORT);
+    _mdnsUp = true;
+  }
+#endif
+
   // MARK: NTP time sync — once only, skip if RTC already valid
   if (_sh.useTLS) {
     time_t now = 0;
@@ -394,8 +403,7 @@ static bool _shServe() {
   String msg = _wsRecv();
   if (!msg.length()) return _sh.ws->connected();
 
-  // MARK: P2P signaling — hand offer to the WebRTC engine, return its answer.
-  // ("type" is only sent on signaling msgs; HTTP requests parse to "".)
+  // MARK: P2P signaling — offer to the WebRTC engine, send back its answer.
   if (_jStr(msg, "type") == "webrtc") {
     String rid = _jStr(msg, "id");
     String answer = _p2pHandler ? _p2pHandler(_jStr(msg, "sdp")) : String();

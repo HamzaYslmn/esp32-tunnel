@@ -1,15 +1,12 @@
-// esp32-tunnel P2P client — WebRTC DataChannel with automatic relay fallback.
+// esp32-tunnel P2P client — WebRTC DataChannel, automatic relay fallback.
+//   const dev = espTunnel('https://server', 'device');
+//   const res = await dev.fetch('/status');   // res.via: 'p2p' | 'relay'
 //
-//   const dev = espTunnel('https://myserver.com', 'my-device');
-//   const res = await dev.fetch('/status');      // P2P if available, else relay
-//   console.log(res.status, res.body);
+// DataChannel wire protocol (device must mirror):
+//   browser -> device: {"i":id,"m":method,"p":path,"b":body}
+//   device  -> browser: {"i":id,"s":status,"b":body,"t":contentType}
 //
-// DataChannel wire protocol (device side must mirror this):
-//   browser -> device : {"i":<id>,"m":<method>,"p":<path>,"b":<body>}
-//   device  -> browser: {"i":<id>,"s":<status>,"b":<body>,"t":<contentType>}
-//
-// ponytail: non-trickle ICE (gather-then-send) — ~1-2s slower setup, far less code
-// than trickle signaling. STUN only; no TURN, so symmetric NAT falls back to relay.
+// ponytail: non-trickle ICE (simpler); STUN only, no TURN -> symmetric NAT uses relay.
 
 function espTunnel(server, id, { stun = 'stun:stun.l.google.com:19302', key = '' } = {}) {
   let chan = null, connecting = null, declined = false;   // declined: device has no P2P engine

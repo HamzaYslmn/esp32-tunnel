@@ -141,14 +141,21 @@
     const METHODS = {
       p2p: { label: 'P2P', hint: 'WebRTC DataChannel, direct to device (falls back to relay).',
         send: (id, path, m) => tunnel(id).fetch(path, { method: m }) },
-      ws:  { label: 'WS', hint: 'WebSocket relay through the server.',
+      ws:  { label: 'WS', hint: 'WebSocket relay through the server. Works anywhere.',
         send: async (id, path, m) => {
           const res = await fetch(`${origin}/${id}${path.startsWith('/') ? '' : '/'}${path}`, { method: m, headers: hdr() });
           return { status: res.status, body: await res.text(), via: 'ws' };
         } },
+      local: { label: 'Local', hint: 'Direct on the same WiFi (~5ms, no server). Opens http://<id>.local in a new tab — an HTTPS page can’t inline-fetch a LAN HTTP device.',
+        send: (id, path) => {
+          const url = `http://${id}.local${path.startsWith('/') ? '' : '/'}${path}`;
+          open(url, '_blank');
+          return { status: '↗', body: 'Opened ' + url, via: 'local' };
+        } },
     };
     let active = 'p2p';
-    const VIA = { p2p: 'bg-green-500/15 text-green-400', relay: 'bg-amber-500/15 text-amber-400', ws: 'bg-sky-500/15 text-sky-400' };
+    const VIA = { p2p: 'bg-green-500/15 text-green-400', relay: 'bg-amber-500/15 text-amber-400',
+                  ws: 'bg-sky-500/15 text-sky-400', local: 'bg-violet-500/15 text-violet-400' };
 
     function renderTabs() {
       $('tabs').innerHTML = '';
@@ -192,7 +199,7 @@
         const t0 = performance.now();
         const r = await METHODS[active].send(id, path, method);
         const ms = Math.round(performance.now() - t0);
-        const ok = r.status >= 200 && r.status < 400;
+        const ok = r.status === '↗' || (r.status >= 200 && r.status < 400);
         $('status').textContent = r.status;
         $('status').className = 'font-mono font-bold ' + (ok ? 'text-green-400' : 'text-red-400');
         $('via').textContent = (r.via || active).toUpperCase();

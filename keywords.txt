@@ -20,6 +20,7 @@ tunnelSetup	KEYWORD2
 tunnelP2P	KEYWORD2
 tunnelPublic	KEYWORD2
 tunnelKey	KEYWORD2
+tunnelLocalURL	KEYWORD2
 tunnelLog	KEYWORD2
 tunnelStop	KEYWORD2
 tunnelLoop	KEYWORD2
