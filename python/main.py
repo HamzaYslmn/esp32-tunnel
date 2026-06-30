@@ -8,6 +8,7 @@ ESP32 connects via WebSocket, visitors access via HTTP.
   GET  /api/status               — health check
 """
 
+import importlib
 import os
 import pathlib
 from contextlib import asynccontextmanager
@@ -16,7 +17,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from api import root, tunnel
 from middleware import middleware, log
 
 _frontend = pathlib.Path(__file__).parent / "frontend"
@@ -34,9 +34,20 @@ app = FastAPI(title="esp32-tunnel", lifespan=lifespan)
 middleware.add_middlewares(app)
 
 
-# MARK: API routes
-app.include_router(root.router, prefix="/api")
-app.include_router(tunnel.router, prefix="/api")
+# MARK: Auto-discover routers from api/ — drop a module with a `router` in api/
+# and it's registered, no wiring here.
+def _include_all_routers(directory: str, prefix: str):
+    api_dir = pathlib.Path(__file__).parent / directory
+    for py in sorted(api_dir.rglob("*.py")):
+        if py.name.startswith("_"):
+            continue
+        module = f"{api_dir.name}." + ".".join(py.relative_to(api_dir).with_suffix("").parts)
+        router = getattr(importlib.import_module(module), "router", None)
+        if router is not None:
+            app.include_router(router, prefix=prefix)
+
+
+_include_all_routers("api", "/api")
 
 
 # MARK: P2P browser client — explicit route (the /{tid} proxy would 400 on the dot)
@@ -46,17 +57,19 @@ async def p2p_js():
 
 
 # MARK: Catch-all proxy — /{tid} and /{tid}/{path} (after specific routes)
+from api.tunnel import tunnel_proxy
+
 _ALL_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 
 
 @app.api_route("/{tid}/{path:path}", methods=_ALL_METHODS)
 async def proxy_path(tid: str, path: str, request: Request):
-    return await tunnel.tunnel_proxy(tid, path, request)
+    return await tunnel_proxy(tid, path, request)
 
 
 @app.api_route("/{tid}", methods=_ALL_METHODS)
 async def proxy_root(tid: str, request: Request):
-    return await tunnel.tunnel_proxy(tid, "", request)
+    return await tunnel_proxy(tid, "", request)
 
 
 # MARK: Dashboard — StaticFiles serves index.html at "/" (mounted LAST so the
