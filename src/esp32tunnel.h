@@ -146,7 +146,6 @@ static const int _DRAIN_TIMEOUT = 200;
 static const int _HDR_TIMEOUT   = 3000;
 static const int _MAX_HDR_SIZE  = 4096;
 static const int _MAX_BODY_SIZE = 16384;
-static const int _MAX_REQ_LINE  = 2048;
 
 enum _Phase { _PH_IDLE, _PH_INIT, _PH_SERVE, _PH_WAIT };
 

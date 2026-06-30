@@ -99,24 +99,29 @@
     const devs = {};                       // espTunnel instance per id+key (keeps P2P channel)
     const tunnel = id => devs[id + '|' + key()] ||= espTunnel(origin, id, { key: key() });
 
+    // Render a row of buttons into `el`; highlights `activeKey`, calls onPick(key) on click.
+    function buttonRow(el, entries, activeKey, baseCls, activeCls, onPick) {
+      el.innerHTML = '';
+      for (const [k, label] of entries) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.className = `${baseCls} ${k === activeKey ? activeCls : 'text-zinc-500 hover:text-zinc-300'}`;
+        b.onclick = () => onPick(k);
+        el.appendChild(b);
+      }
+    }
+
     // ── Top-level views ──
     const VIEWS = { device: 'Device', server: 'Server' };
     let view = 'device';
     function renderViews() {
-      $('views').innerHTML = '';
-      for (const [k, label] of Object.entries(VIEWS)) {
-        const b = document.createElement('button');
-        b.textContent = label;
-        b.className = 'flex-1 py-1.5 rounded-lg font-medium ' +
-          (k === view ? 'bg-zinc-800 text-orange-400' : 'text-zinc-500 hover:text-zinc-300');
-        b.onclick = () => {
+      buttonRow($('views'), Object.entries(VIEWS), view,
+        'flex-1 py-1.5 rounded-lg font-medium', 'bg-zinc-800 text-orange-400', k => {
           view = k; renderViews();
           $('view-device').classList.toggle('hidden', k !== 'device');
           $('view-server').classList.toggle('hidden', k !== 'server');
           if (k === 'server') loadServer();
-        };
-        $('views').appendChild(b);
-      }
+        });
     }
 
     // ── Server view ──
@@ -158,15 +163,13 @@
                   ws: 'bg-sky-500/15 text-sky-400', local: 'bg-violet-500/15 text-violet-400' };
 
     function renderTabs() {
-      $('tabs').innerHTML = '';
-      for (const [k, m] of Object.entries(METHODS)) {
-        const b = document.createElement('button');
-        b.textContent = m.label;
-        b.className = 'flex-1 py-2.5 font-medium ' +
-          (k === active ? 'text-orange-400 border-b-2 border-orange-400' : 'text-zinc-500 hover:text-zinc-300');
-        b.onclick = () => { active = k; renderTabs(); $('tabhint').textContent = m.hint; $('result').classList.add('hidden'); };
-        $('tabs').appendChild(b);
-      }
+      const entries = Object.entries(METHODS).map(([k, m]) => [k, m.label]);
+      buttonRow($('tabs'), entries, active,
+        'flex-1 py-2.5 font-medium', 'text-orange-400 border-b-2 border-orange-400', k => {
+          active = k; renderTabs();
+          $('tabhint').textContent = METHODS[k].hint;
+          $('result').classList.add('hidden');
+        });
       $('tabhint').textContent = METHODS[active].hint;
     }
 

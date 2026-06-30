@@ -68,44 +68,8 @@ static void _boreSendMsg(WiFiClient &c, const String &msg) {
   c.write((uint8_t)0);
 }
 
-// ---------------------------------------------------------------------------
-// MARK: Parse server messages — extract tagged enum fields
-// ---------------------------------------------------------------------------
-
-// {"Hello":PORT}  → returns PORT
-static int _boreParseHello(const String &msg) {
-  int i = msg.indexOf("\"Hello\"");
-  if (i < 0) return -1;
-  i += 7; // skip past "Hello"
-  while (i < (int)msg.length() && (msg[i] == ':' || msg[i] == ' ')) i++;
-  return atoi(msg.c_str() + i);
-}
-
-// {"Connection":"UUID"}  → returns UUID
-static String _boreParseConnection(const String &msg) {
-  int i = msg.indexOf("\"Connection\"");
-  if (i < 0) return "";
-  i += 12; // skip past "Connection"
-  while (i < (int)msg.length() && (msg[i] == ':' || msg[i] == ' ')) i++;
-  if (i >= (int)msg.length() || msg[i] != '"') return "";
-  i++;
-  int start = i;
-  while (i < (int)msg.length() && msg[i] != '"') i++;
-  return msg.substring(start, i);
-}
-
-// {"Error":"MSG"}  → returns error text
-static String _boreParseError(const String &msg) {
-  int i = msg.indexOf("\"Error\"");
-  if (i < 0) return "";
-  i += 7;
-  while (i < (int)msg.length() && (msg[i] == ':' || msg[i] == ' ')) i++;
-  if (i >= (int)msg.length() || msg[i] != '"') return "";
-  i++;
-  int start = i;
-  while (i < (int)msg.length() && msg[i] != '"') i++;
-  return msg.substring(start, i);
-}
+// Server messages — {"Hello":PORT}, {"Connection":"UUID"}, {"Error":"MSG"} —
+// are parsed with the shared _jInt/_jStr helpers at the call sites.
 
 // ---------------------------------------------------------------------------
 // MARK: Proxy — bidirectional TCP copy
@@ -164,10 +128,10 @@ static bool _boreInit() {
   if (!resp.length()) { _boreCtrl.stop(); return false; }
 
   // Check for error
-  String err = _boreParseError(resp);
+  String err = _jStr(resp, "Error");
   if (err.length()) { _boreCtrl.stop(); return false; }
 
-  int port = _boreParseHello(resp);
+  int port = _jInt(resp, "Hello", -1);
   if (port <= 0) { _boreCtrl.stop(); return false; }
 
   _bore.remotePort = (uint16_t)port;
@@ -189,7 +153,7 @@ static bool _boreServe() {
   if (msg.indexOf("\"Heartbeat\"") >= 0) return true;
 
   // Connection request
-  String uuid = _boreParseConnection(msg);
+  String uuid = _jStr(msg, "Connection");
   if (!uuid.length()) return true;
 
   // Find a free proxy slot

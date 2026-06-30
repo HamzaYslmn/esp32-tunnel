@@ -13,16 +13,13 @@ Three providers (pick one):
 
 ## Features
 
-- **Unified API** — `tunnelSetup(SELFHOST, ...)` or `tunnelSetup(LOCALTUNNEL, ...)` or `tunnelSetup(BORE)`
-- **No WiFiClientSecure for self-hosted** — plain WiFiClient, ~40 KB less RAM
-- **ESPAsyncWebServer compatible** — forwards requests to localhost (local proxy)
-- **Handler mode** — optional callback for direct request handling (no proxy)
-- **FreeRTOS dual-core** — Core 0 maintains tunnel, Core 1 serves requests
+- **One API, three providers** — `tunnelSetup(SELFHOST | LOCALTUNNEL | BORE, ...)`
+- **Secure by default** — auto-generated per-device access key (self-hosted)
+- **Runs itself** — a FreeRTOS task drives the tunnel; `loop()` stays free (ESP32)
+- **ESPAsyncWebServer compatible** — or handler mode for direct, no-proxy handling
+- **Local + remote** — reach the device at `http://<id>.local` (mDNS) or the public URL
 - **Auto-reconnect** — WiFi drops, stale connections, tunnel expiry all handled
-- **Security hardened** — path sanitization, bounded reads
-- **Built-in logging** — Python/FastAPI-style `logger.info()`, `logger.request()` via [ESPLogger](https://github.com/HamzaYslmn/espfetch)
-- **Thread-safe Serial** — reads via [esp-rtosSerial](https://github.com/HamzaYslmn/esp-rtosSerial)
-- **Simple API** — `tunnelSetup()`, `tunnelURL()`, `tunnelReady()`
+- **Lean** — self-hosted uses plain WiFiClient (no TLS), ~40 KB less RAM
 
 ## Footprint & trimming (ESP32)
 
@@ -185,12 +182,11 @@ tunnel is only for reaching it from outside. The dashboard exposes all three as 
 
 #### Access keys (secure by default)
 
-Self-hosted devices are **private by default**: on first boot the ESP32 generates a
-random access key (persisted in NVS, printed on serial as `tunnelKey()`). Every
-visitor request must send it as `?key=<key>` or the **`X-Tunnel-Key` header** — the
-dashboard and `p2p.js` do this for you. Set your own with the password overload
-above, or call `tunnelPublic()` to disable auth (e.g. a public website on a Pi).
-Local LAN access hits the device's own server directly and is not gated by the key.
+Self-hosted devices are **private by default** — the ESP32 generates a random key on
+first boot (persisted in NVS, read via `tunnelKey()`). Send it as `?key=<key>` or the
+`X-Tunnel-Key` header (the dashboard and `p2p.js` do this for you). Set your own via
+the password overload above, or call `tunnelPublic()` to disable auth. Direct LAN
+access hits the device's own server and isn't gated by the key.
 
 #### P2P mode (offload traffic from your relay)
 

@@ -1,4 +1,4 @@
-# MARK: esp32-tunnel relay server — FastAPI with auto-import
+# MARK: esp32-tunnel relay server
 """
 Deploy on Render.com (or any Python host with WebSocket support).
 ESP32 connects via WebSocket, visitors access via HTTP.
@@ -8,7 +8,6 @@ ESP32 connects via WebSocket, visitors access via HTTP.
   GET  /api/status               — health check
 """
 
-import importlib
 import os
 import pathlib
 from contextlib import asynccontextmanager
@@ -17,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
+from api import root, tunnel
 from middleware import middleware, log
 
 _frontend = pathlib.Path(__file__).parent / "frontend"
@@ -34,27 +34,9 @@ app = FastAPI(title="esp32-tunnel", lifespan=lifespan)
 middleware.add_middlewares(app)
 
 
-# MARK: Auto-discover routers from api/ directory
-_MARKER = "from fastapi import APIRouter"
-
-
-def _include_all_routers(directory: str, prefix: str):
-    api_dir = pathlib.Path(__file__).parent / directory
-    base = api_dir.name
-    for py in sorted(api_dir.rglob("*.py")):
-        if py.name.startswith("_"):
-            continue
-        with open(py, "rb") as f:
-            if _MARKER not in f.read(512).decode("utf-8", errors="ignore"):
-                continue
-        module = base + "." + ".".join(py.relative_to(api_dir).with_suffix("").parts)
-        try:
-            app.include_router(importlib.import_module(module).router, prefix=prefix)
-        except Exception as e:
-            log.error(f"Router error {module}: {e}")
-
-
-_include_all_routers("api", "/api")
+# MARK: API routes
+app.include_router(root.router, prefix="/api")
+app.include_router(tunnel.router, prefix="/api")
 
 
 # MARK: P2P browser client — explicit route (the /{tid} proxy would 400 on the dot)
@@ -64,19 +46,17 @@ async def p2p_js():
 
 
 # MARK: Catch-all proxy — /{tid} and /{tid}/{path} (after specific routes)
-from api.tunnel import tunnel_proxy
-
 _ALL_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 
 
 @app.api_route("/{tid}/{path:path}", methods=_ALL_METHODS)
 async def proxy_path(tid: str, path: str, request: Request):
-    return await tunnel_proxy(tid, path, request)
+    return await tunnel.tunnel_proxy(tid, path, request)
 
 
 @app.api_route("/{tid}", methods=_ALL_METHODS)
 async def proxy_root(tid: str, request: Request):
-    return await tunnel_proxy(tid, "", request)
+    return await tunnel.tunnel_proxy(tid, "", request)
 
 
 # MARK: Dashboard — StaticFiles serves index.html at "/" (mounted LAST so the

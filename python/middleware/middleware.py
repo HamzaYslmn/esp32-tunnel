@@ -9,7 +9,7 @@ from typing import Callable
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-ALLOWED_ORIGINS = ["*"]  # TODO: Restrict in production
+ALLOWED_ORIGINS = ["*"]  # open by design — the dashboard/clients are cross-origin
 MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
 RATE_LIMIT = int(os.environ.get("RATE_LIMIT", 60))   # requests per window per IP
 RATE_WINDOW = int(os.environ.get("RATE_WINDOW", 60))  # window in seconds

@@ -96,9 +96,9 @@ def _pick_headers(request: Request) -> dict:
 
 
 def _clean_grace():
-    now = time.time()
-    for k in [k for k, v in _grace.items() if now - v > GRACE_PERIOD * 2]:
-        del _grace[k]
+    global _grace
+    cutoff = time.time() - GRACE_PERIOD * 2
+    _grace = {k: v for k, v in _grace.items() if v > cutoff}
 
 
 # MARK: Auth — device key via ?key= or X-Tunnel-Key. No key on device = no check.
