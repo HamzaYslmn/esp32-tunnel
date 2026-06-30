@@ -18,6 +18,7 @@
 #ifdef ESP32
   #include <WiFi.h>
   #include <lwip/sockets.h>
+  #include <Preferences.h>
 #elif defined(ESP8266)
   #include <ESP8266WiFi.h>
 #endif
@@ -70,6 +71,32 @@ struct RouteConfig {
 static RouteConfig _tunRoutes[TUN_MAX_ROUTES];
 static int _tunRouteCount = 0;
 
+// MARK: Access key — secure by default. Auto-generated (ESP32 NVS, stable
+// across reboots) unless the sketch sets its own or opts out. Required on the
+// WS handshake (blocks id hijack) and on every visitor request (?key=/header).
+static String _tunKey;            // "" = open access (insecure)
+static bool _tunAutoAuth = true;
+
+static String _tunMakeKey() {
+#ifdef ESP32
+  Preferences p;
+  if (p.begin("esp32tunnel", false)) {
+    String k = p.getString("key", "");
+    if (k.length() < 24) {
+      static const char hex[] = "0123456789abcdef";
+      char buf[33];
+      for (int i = 0; i < 32; i++) buf[i] = hex[esp_random() & 0xF];
+      buf[32] = 0;
+      k = buf;
+      p.putString("key", k);
+    }
+    p.end();
+    return k;
+  }
+#endif
+  return "";   // ESP8266 / NVS unavailable: pass a password to tunnelSetup()
+}
+
 #ifndef TUN_PORT
 #define TUN_PORT 80
 #endif
@@ -87,6 +114,18 @@ static int _tunRouteCount = 0;
 #endif
 #ifndef TUN_REALLOC
 #define TUN_REALLOC 12
+#endif
+
+// MARK: Background task (ESP32) — tunnelSetup() runs the tunnel in its own
+// FreeRTOS task, so no tunnelLoop() in loop() is needed. Tune if required.
+#ifndef TUN_TASK_STACK
+#define TUN_TASK_STACK 8192      // proven enough for the WS + TLS path
+#endif
+#ifndef TUN_TASK_PRIO
+#define TUN_TASK_PRIO 1
+#endif
+#ifndef TUN_TASK_CORE
+#define TUN_TASK_CORE 1
 #endif
 
 // ---------------------------------------------------------------------------
@@ -332,14 +371,48 @@ static TunnelProvider _tunProvider = SELFHOST;
 // MARK: Public API — dispatch to active provider
 // ---------------------------------------------------------------------------
 
+// MARK: Drive the active provider once
+static inline void _tunService() {
+  if (_tunProvider == SELFHOST)      _shLoop();
+  else if (_tunProvider == BORE)     _boreLoop();
+  else                               _ltLoop();
+}
+
+// MARK: Background task — owns the tunnel so the sketch's loop() stays free
+#ifdef ESP32
+static TaskHandle_t _tunTask = nullptr;
+static volatile bool _tunTaskRun = false;
+
+static void _tunTaskFn(void *) {
+  while (_tunTaskRun) { _tunService(); vTaskDelay(pdMS_TO_TICKS(10)); }
+  _tunTask = nullptr;
+  vTaskDelete(nullptr);            // clean self-exit (never killed mid-TLS)
+}
+
+static inline void _tunStartTask() {
+  if (_tunTask) return;
+  _tunTaskRun = true;
+  xTaskCreatePinnedToCore(_tunTaskFn, "esp32tunnel", TUN_TASK_STACK,
+                          nullptr, TUN_TASK_PRIO, &_tunTask, TUN_TASK_CORE);
+}
+#endif
+
 // MARK: tunnelSetup overloads
 
 inline void tunnelSetup(TunnelProvider p, TunnelHandler handler,
                         const char *option, TunnelMode mode = TUN_FLEX) {
   _tunProvider = p;
+  // MARK: Secure by default (self-hosted) — generate an access key unless the
+  // sketch set its own auth or opted out. Sent on the handshake; the server
+  // then requires it on every visitor request (see tunnelKey()).
+  if (p == SELFHOST && !_tunKey.length() && _tunAutoAuth && !_tunRouteCount)
+    _tunKey = _tunMakeKey();
   if (p == SELFHOST)      _shBegin(handler, option);
   else if (p == BORE)     _boreBegin(option, TUN_PORT);
   else                    _ltBegin(handler, option, mode);
+#ifdef ESP32
+  _tunStartTask();                 // no tunnelLoop() needed on ESP32
+#endif
 }
 
 inline void tunnelSetup(TunnelProvider p, const char *option) {
@@ -358,10 +431,10 @@ inline void tunnelSetup(TunnelProvider p) {
   tunnelSetup(p, (TunnelHandler)nullptr, nullptr, TUN_FLEX);
 }
 
-// MARK: tunnelSetup with global password — entire tunnel is authenticated
+// MARK: tunnelSetup with a custom password — whole tunnel uses this key
 inline void tunnelSetup(TunnelProvider p, const char *option, const char *password) {
-  _tunRouteCount = 1;
-  _tunRoutes[0] = {"/", password};
+  _tunAutoAuth = false;
+  _tunKey = password ? password : "";
   tunnelSetup(p, (TunnelHandler)nullptr, option, TUN_FLEX);
 }
 
@@ -378,16 +451,34 @@ inline void tunnelSetup(TunnelProvider p, const char *option, const RouteConfig 
 // only relays the handshake, not the traffic. Unset = relay as before.
 inline void tunnelP2P(P2PSignalHandler handler) { _p2pHandler = handler; }
 
-// MARK: tunnelLoop / tunnelStop
+// MARK: Access control (call BEFORE tunnelSetup, self-hosted only)
+// Default = auto-generated key. tunnelPublic() = open access (e.g. host a public
+// website on an RPi). Custom password: tunnelSetup(SELFHOST, server, "mypass").
+inline void tunnelPublic() { _tunAutoAuth = false; _tunKey = ""; }
+inline const char* tunnelKey() { return _tunKey.c_str(); }
 
+// MARK: tunnelLog — toggle access logging (replaces tunnelLoop(true))
+inline void tunnelLog(bool enable = true) { _tunAutoLog = enable; }
+
+// MARK: tunnelLoop — only needed on ESP8266 (no FreeRTOS task). On ESP32 the
+// background task already drives the tunnel, so this is a safe no-op (calling
+// it anyway won't double-drive the socket). Kept for backward compatibility.
 inline void tunnelLoop(bool log = false) {
   _tunAutoLog = log;
-  if (_tunProvider == SELFHOST)      _shLoop();
-  else if (_tunProvider == BORE)     _boreLoop();
-  else                               _ltLoop();
+#ifdef ESP32
+  if (_tunTask) return;
+#endif
+  _tunService();
 }
 
 inline void tunnelStop() {
+#ifdef ESP32
+  // Ask the task to exit and wait (≤1s) so sockets aren't torn down under it.
+  if (_tunTask && _tunTask != xTaskGetCurrentTaskHandle()) {
+    _tunTaskRun = false;
+    for (int i = 0; i < 200 && _tunTask; i++) _DELAY(5);
+  }
+#endif
   if (_tunProvider == SELFHOST)      _shStop();
   else if (_tunProvider == BORE)     _boreStop();
   else                               _ltStop();

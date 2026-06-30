@@ -95,10 +95,13 @@ static bool _wsConnect() {
     _sh.ws = &_shWsPlain;
   }
   if (!_tcpConnectHost(*_sh.ws, _sh.host.c_str(), _sh.shPort)) return false;
+  // Carry the access key on the handshake so the server can reject id hijacks.
+  String q = "?id=" + _sh.id;
+  if (_tunKey.length()) { q += "&token="; q += _tunKey; }
   _sh.ws->printf(
-    "GET %s?id=%s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+    "GET %s%s HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
     "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
-    TUN_WS_PATH, _sh.id.c_str(), _sh.host.c_str()
+    TUN_WS_PATH, q.c_str(), _sh.host.c_str()
   );
   unsigned long t0 = millis();
   while (!_sh.ws->available() && millis() - t0 < _CONNECT_MS) _DELAY(10);
@@ -392,8 +395,8 @@ static bool _shServe() {
   if (!msg.length()) return _sh.ws->connected();
 
   // MARK: P2P signaling — hand offer to the WebRTC engine, return its answer.
-  // Cheap guard ("webrtc" appears only here) keeps the HTTP hot path untouched.
-  if (msg.indexOf("webrtc") >= 0 && _jStr(msg, "type") == "webrtc") {
+  // ("type" is only sent on signaling msgs; HTTP requests parse to "".)
+  if (_jStr(msg, "type") == "webrtc") {
     String rid = _jStr(msg, "id");
     String answer = _p2pHandler ? _p2pHandler(_jStr(msg, "sdp")) : String();
     if (answer.length()) _wsSendSdp(rid, answer);

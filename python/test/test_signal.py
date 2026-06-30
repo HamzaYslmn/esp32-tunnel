@@ -1,6 +1,10 @@
 # Runnable check for P2P signaling + auth — drives the endpoint directly in one
 # asyncio loop with a fake device WS, avoiding TestClient's portal threading.
 import asyncio
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))   # repo: python/
 
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -15,8 +19,8 @@ class FakeWS:
 
 def _req(body: bytes, key: str = "") -> Request:
     async def receive(): return {"type": "http.request", "body": body, "more_body": False}
-    headers = [(b"x-tunnel-key", key.encode())] if key else []   # key via header, not query
-    return Request({"type": "http", "method": "POST", "headers": headers}, receive)
+    headers = [(b"x-tunnel-key", key.encode())] if key else []
+    return Request({"type": "http", "method": "POST", "headers": headers, "query_string": b""}, receive)
 
 
 async def _run(answer_sdp, token="", key=""):

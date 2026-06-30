@@ -101,12 +101,16 @@ def _clean_grace():
         del _grace[k]
 
 
-# MARK: Auth — visitor must present the device's key in the X-Tunnel-Key header.
-# No key on the device (public mode) = no check. Constant-time compare.
+# MARK: Auth — visitor presents the device key as ?key= (browser URLs) or the
+# X-Tunnel-Key header (programmatic). Public device (no key) = no check.
+def _req_key(request: Request) -> str:
+    return (request.query_params.get("key")
+            or request.query_params.get("x-tunnel-key")
+            or request.headers.get("x-tunnel-key", ""))
+
+
 def _authorize(tun: Tunnel, request: Request):
-    if not tun.token:
-        return
-    if not hmac.compare_digest(request.headers.get("x-tunnel-key", ""), tun.token):
+    if tun.token and not hmac.compare_digest(_req_key(request), tun.token):
         raise HTTPException(401, "Unauthorized")
 
 
@@ -221,10 +225,9 @@ async def tunnel_proxy(tid: str, path: str = "", request: Request = None):
 
     safe = _safe_path("/" + path if path else "/")
 
-    # MARK: Auth — device key (X-Tunnel-Key header) + per-route RouteConfig
+    # MARK: Auth — device key (?key= or X-Tunnel-Key) + per-route RouteConfig
     _authorize(tun, request)
-    key = request.headers.get("x-tunnel-key", "")
-    if not tun.check_route(safe, key):
+    if not tun.check_route(safe, _req_key(request)):
         raise HTTPException(403, "Access denied")
 
     msg = {"method": request.method, "path": safe, "ip": _client_ip(request)}

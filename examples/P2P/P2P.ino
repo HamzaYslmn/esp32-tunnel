@@ -57,10 +57,18 @@ void setup() {
   });
   server.begin();
 
-  tunnelP2P(p2pAnswer);              // enable P2P signaling (before/after setup is fine)
-  tunnelSetup(SELFHOST, TUNNEL_SERVER);
+  tunnelP2P(p2pAnswer);              // enable P2P signaling
+  tunnelLog(true);                   // optional access logging
+  tunnelSetup(SELFHOST, TUNNEL_SERVER);   // runs in its own task on ESP32
+
+  // Secure by default: an access key is auto-generated (persisted in NVS) and
+  // required on every request via the X-Tunnel-Key header (the dashboard and
+  // p2p.js send it for you). For an open device instead, call tunnelPublic()
+  // before tunnelSetup(); for a fixed key, tunnelSetup(SELFHOST, server, "pass").
+  delay(500);
+  Serial.printf("Access key: %s\n", tunnelKey());
 }
 
 void loop() {
-  tunnelLoop(true);
+  vTaskDelete(NULL);   // nothing to do here — free the loop stack
 }

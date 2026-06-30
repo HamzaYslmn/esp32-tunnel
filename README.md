@@ -67,8 +67,15 @@ void setup() {
   tunnelSetup(SELFHOST, "myserver.com/my-device");
 }
 
-void loop() { tunnelLoop(); }
+void loop() {}   // ESP32: tunnel runs in its own task — loop() is free
 ```
+
+> **ESP32:** `tunnelSetup()` starts a background FreeRTOS task, so you do **not**
+> call `tunnelLoop()`. Leave `loop()` empty, use it for your own code, or
+> `vTaskDelete(NULL)` to reclaim its stack. Enable request logs with `tunnelLog()`.
+> Tune the task with `-DTUN_TASK_CORE=0 -DTUN_TASK_PRIO=2 -DTUN_TASK_STACK=10240`.
+>
+> **ESP8266** has no such task — there you must call `tunnelLoop()` in `loop()`.
 
 ### Localtunnel (free HTTPS — no server needed)
 
@@ -126,9 +133,12 @@ All providers expose the same public API:
 
 | Function | Description |
 |---|---|
-| `tunnelSetup(...)` | Start tunnel (args differ per provider) |
-| `tunnelLoop()` | Drive tunnel — call in `loop()` or FreeRTOS task |
-| `tunnelStop()` | Stop tunnel and free resources |
+| `tunnelSetup(...)` | Start tunnel (args differ per provider). ESP32: spawns the task |
+| `tunnelLog(bool)` | Enable/disable request logging |
+| `tunnelPublic()` | Disable auth — open access (call before `tunnelSetup`) |
+| `tunnelKey()` | The device's access key (`""` if public) |
+| `tunnelLoop()` | ESP8266 only — drive tunnel in `loop()`. No-op once the ESP32 task runs |
+| `tunnelStop()` | Stop tunnel, end the task, free resources |
 | `tunnelURL()` | Public URL or `"(connecting...)"` |
 | `tunnelReady()` | `true` when tunnel is live |
 | `tunnelLastIP()` | Last requester's IP address |
@@ -139,10 +149,19 @@ All providers expose the same public API:
 ```cpp
 tunnelSetup(SELFHOST, "host/device-id");           // proxy mode (local port 80)
 tunnelSetup(SELFHOST, handler, "host/device-id");  // handler callback (no proxy)
-tunnelSetup(SELFHOST, "host/device-id", "pass");   // global password (?key=pass)
+tunnelSetup(SELFHOST, "host/device-id", "pass");   // custom password (whole tunnel)
 tunnelSetup(SELFHOST, "host/device-id", routes);   // per-route auth
+tunnelPublic();                                    // before setup: OPEN access (no key)
 tunnelP2P(answerFn);                               // opt-in WebRTC P2P (see below)
 ```
+
+#### Access keys (secure by default)
+
+Self-hosted devices are **private by default**: on first boot the ESP32 generates a
+random access key (persisted in NVS, printed on serial as `tunnelKey()`). Every
+visitor request must send it in the **`X-Tunnel-Key` header** — the dashboard and
+`p2p.js` do this for you. Set your own with the password overload above, or call
+`tunnelPublic()` to disable auth entirely (e.g. hosting a public website on a Pi).
 
 #### P2P mode (offload traffic from your relay)
 

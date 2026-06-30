@@ -1,4 +1,5 @@
 .vscode/
+.claude/
 *.o
 *.a
 *.elf
