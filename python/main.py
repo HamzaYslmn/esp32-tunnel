@@ -14,13 +14,11 @@ import pathlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from middleware import middleware, log
 
 _frontend = pathlib.Path(__file__).parent / "frontend"
-_p2p_js = (_frontend / "p2p.js").read_text(encoding="utf-8")
 PORT = int(os.environ.get("PORT", 8000))
 
 
@@ -48,12 +46,6 @@ def _include_all_routers(directory: str, prefix: str):
 
 
 _include_all_routers("api", "/api")
-
-
-# MARK: P2P browser client — explicit route (the /{tid} proxy would 400 on the dot)
-@app.get("/p2p.js")
-async def p2p_js():
-    return Response(_p2p_js, media_type="application/javascript")
 
 
 # MARK: Catch-all proxy — /{tid} and /{tid}/{path} (after specific routes)

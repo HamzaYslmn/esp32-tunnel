@@ -5,8 +5,8 @@ As a library (tests):
         ...                      # device is connected and answering
 
 Standalone (drive the dashboard against a virtual device):
-    uv run python test/emulator.py --id p2ptest --key s3cret
-    # then open the server's dashboard and talk to "p2ptest"
+    uv run python test/emulator.py --id demo --key s3cret
+    # then open the server's dashboard and talk to "demo"
 """
 import argparse
 import asyncio
@@ -17,10 +17,9 @@ import websockets
 
 class FakeESP32:
     def __init__(self, server="ws://localhost:8000", id="emu", key="",
-                 handler=None, p2p_answer=""):
+                 handler=None):
         self.server, self.id, self.key = server, id, key
         self.handler = handler or self._default      # (method, path, body) -> (status, body, ctype)
-        self.p2p_answer = p2p_answer                 # "" = decline P2P (relay fallback)
         self._ws = self._task = None
 
     def _default(self, method, path, body):
@@ -31,9 +30,7 @@ class FakeESP32:
     async def _serve(self, ws):
         async for raw in ws:
             m = json.loads(raw)
-            if m.get("type") == "webrtc":
-                await ws.send(json.dumps({"id": m["id"], "sdp": self.p2p_answer}))
-            elif m.get("method"):
+            if m.get("method"):
                 status, body, ctype = self.handler(m["method"], m.get("path", "/"), m.get("body", ""))
                 await ws.send(json.dumps({"id": m["id"], "status": status, "body": body, "type": ctype}))
 
@@ -61,10 +58,8 @@ if __name__ == "__main__":
     ap.add_argument("--server", default="ws://localhost:8000")
     ap.add_argument("--id", default="emu")
     ap.add_argument("--key", default="")
-    ap.add_argument("--p2p", action="store_true", help="answer P2P with a fake SDP (default: decline)")
     a = ap.parse_args()
     try:
-        asyncio.run(FakeESP32(a.server, a.id, a.key,
-                              p2p_answer="v=0\\r\\nfake-answer" if a.p2p else "").run_forever())
+        asyncio.run(FakeESP32(a.server, a.id, a.key).run_forever())
     except KeyboardInterrupt:
         pass

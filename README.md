@@ -29,7 +29,7 @@ WiFi + TLS (the `https` relay) + your web server, not the tunnel.
 | Config | Flash | Trim |
 |---|---|---|
 | Relay + local web server + mDNS (typical) | ~1108 KB | — |
-| Handler/P2P mode + `#define TUN_MDNS 0` | ~1037 KB | **−71 KB** |
+| Handler mode + `#define TUN_MDNS 0` | ~1037 KB | **−71 KB** |
 
 - **Drop the local web server** — use handler mode (`tunnelSetup(SELFHOST, handler, "host/id")`); no `ESPAsyncWebServer`, saves its flash **and** its runtime `AsyncTCP` task/buffers.
 - **`#define TUN_MDNS 0`** before the include — drops mDNS (~30 KB) if you don't need `<id>.local`.
@@ -57,8 +57,6 @@ Download ZIP → **Sketch → Include Library → Add .ZIP Library**
 
 ## Quick Start
 
-### Self-hosted (default — lightweight, no TLS on ESP)
-
 ```cpp
 #include <ESPAsyncWebServer.h>
 #include <esp32tunnel.h>
@@ -82,62 +80,20 @@ void setup() {
 void loop() {}   // ESP32: tunnel runs in its own task — loop() is free
 ```
 
+Switch provider by changing one line:
+
+```cpp
+tunnelSetup(SELFHOST, "myserver.com/my-device");  // self-hosted relay
+tunnelSetup(LOCALTUNNEL, "my-esp32");             // free HTTPS via loca.lt
+tunnelSetup(BORE);                                 // free TCP via bore.pub
+```
+
 > **ESP32:** `tunnelSetup()` starts a background FreeRTOS task, so you do **not**
 > call `tunnelLoop()`. Leave `loop()` empty, use it for your own code, or
 > `vTaskDelete(NULL)` to reclaim its stack. Enable request logs with `tunnelLog()`.
 > Tune the task with `-DTUN_TASK_CORE=0 -DTUN_TASK_PRIO=2 -DTUN_TASK_STACK=10240`.
 >
 > **ESP8266** has no such task — there you must call `tunnelLoop()` in `loop()`.
-
-### Localtunnel (free HTTPS — no server needed)
-
-```cpp
-#include <ESPAsyncWebServer.h>
-#include <esp32tunnel.h>
-#include <esp32tunnel_testpage.h>
-
-AsyncWebServer server(80);
-
-void setup() {
-  Serial.begin(115200);
-  WiFi.begin("SSID", "PASS");
-  while (WiFi.status() != WL_CONNECTED) delay(500);
-
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *r) {
-    r->send(200, "text/html", TUN_TEST_HTML);
-  });
-  server.begin();
-
-  tunnelSetup(LOCALTUNNEL, "my-esp32");
-}
-
-void loop() { tunnelLoop(); }
-```
-
-### Bore (free TCP tunnel — no login, no account)
-
-```cpp
-#include <ESPAsyncWebServer.h>
-#include <esp32tunnel.h>
-#include <esp32tunnel_testpage.h>
-
-AsyncWebServer server(80);
-
-void setup() {
-  Serial.begin(115200);
-  WiFi.begin("SSID", "PASS");
-  while (WiFi.status() != WL_CONNECTED) delay(500);
-
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *r) {
-    r->send(200, "text/html", TUN_TEST_HTML);
-  });
-  server.begin();
-
-  tunnelSetup(BORE);  // public URL: http://bore.pub:PORT
-}
-
-void loop() { tunnelLoop(); }
-```
 
 ## API
 
@@ -165,7 +121,6 @@ tunnelSetup(SELFHOST, handler, "host/device-id");  // handler callback (no proxy
 tunnelSetup(SELFHOST, "host/device-id", "pass");   // custom password (whole tunnel)
 tunnelSetup(SELFHOST, "host/device-id", routes);   // per-route auth
 tunnelPublic();                                    // before setup: OPEN access (no key)
-tunnelP2P(answerFn);                               // opt-in WebRTC P2P (see below)
 ```
 
 #### Access paths — local or public, your choice
@@ -174,31 +129,18 @@ tunnelP2P(answerFn);                               // opt-in WebRTC P2P (see bel
 |---|---|---|---|
 | **Local (direct)** | `http://<id>.local/` or the LAN IP | ~5 ms | same WiFi |
 | **Public (WS relay)** | `https://server/<id>?key=<key>` | ~200 ms | works anywhere |
-| **Public (P2P)** | via `p2p.js` | direct RTT | a WebRTC engine on the device |
 
 On the same network, skip the tunnel entirely — the device serves its own pages at
 `http://<id>.local/` (mDNS, on by default; `tunnelLocalURL()`) or its LAN IP. The
-tunnel is only for reaching it from outside. The dashboard exposes all three as tabs.
+tunnel is only for reaching it from outside. The dashboard exposes both as tabs.
 
 #### Access keys (secure by default)
 
 Self-hosted devices are **private by default** — the ESP32 generates a random key on
 first boot (persisted in NVS, read via `tunnelKey()`). Send it as `?key=<key>` or the
-`X-Tunnel-Key` header (the dashboard and `p2p.js` do this for you). Set your own via
+`X-Tunnel-Key` header (the dashboard does this for you). Set your own via
 the password overload above, or call `tunnelPublic()` to disable auth. Direct LAN
 access hits the device's own server and isn't gated by the key.
-
-#### P2P mode (offload traffic from your relay)
-
-By default the server relays every request/response (acts like an HTTP VPN). With
-`tunnelP2P()`, the server only brokers a WebRTC handshake and visitors connect
-**peer-to-peer** — your server stops carrying the traffic. Falls back to the relay
-automatically when P2P can't be established (symmetric NAT, P2P disabled).
-
-The WebRTC engine itself (ICE+DTLS+SCTP, e.g. [libpeer](https://github.com/sepfy/libpeer))
-is **not** bundled — it's the one piece that can't be header-only. You provide it in
-`answerFn`; the library does the signaling. Browser side loads `https://yourserver/p2p.js`.
-See [`examples/P2P`](examples/P2P/P2P.ino).
 
 ### Localtunnel `tunnelSetup()`
 
@@ -311,11 +253,6 @@ Browser → bore.pub:PORT (HTTP) → TCP tunnel → ESP32 localhost:80 → back
 | [Bore](examples/Bore) | Free TCP tunnel via bore.pub (no login) |
 | [HandlerMode](examples/HandlerMode) | Direct request handling (no AsyncWebServer) |
 | [DualCore](examples/DualCore) | ESP32 FreeRTOS task on dedicated core |
-
-## Companion Libraries
-
-- [espfetch](https://github.com/HamzaYslmn/espfetch) — neofetch-style system info + ESPLogger (Python-style logging)
-- [esp-rtosSerial](https://github.com/HamzaYslmn/esp-rtosSerial) — thread-safe Serial reads for FreeRTOS
 
 ## License
 

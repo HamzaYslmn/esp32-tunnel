@@ -202,19 +202,6 @@ static void _wsSendResponse(const String &rid, int code, const String &body, con
   _sh.ws->flush();
 }
 
-// MARK: Stream a P2P SDP answer — {"id":...,"sdp":<escaped>}
-static void _wsSendSdp(const String &rid, const String &sdp) {
-  char prefix[80];
-  int plen = snprintf(prefix, sizeof(prefix), "{\"id\":\"%s\",\"sdp\":\"", rid.c_str());
-  if (plen >= (int)sizeof(prefix)) plen = sizeof(prefix) - 1;
-  int total = plen + _escapeLen(sdp.c_str(), sdp.length()) + 2;  // + "}
-  if (!_wsBeginFrame(total)) return;
-  _sh.ws->write((uint8_t*)prefix, plen);
-  _wsWriteEscaped(sdp.c_str(), sdp.length());
-  _sh.ws->write((const uint8_t*)"\"}", 2);
-  _sh.ws->flush();
-}
-
 static void _wsSendError(const String &rid, int code, const char *text) {
   // Errors are small — no streaming needed
   char buf[128];
@@ -402,15 +389,6 @@ static bool _shServe() {
 
   String msg = _wsRecv();
   if (!msg.length()) return _sh.ws->connected();
-
-  // MARK: P2P signaling — offer to the WebRTC engine, send back its answer.
-  if (_jStr(msg, "type") == "webrtc") {
-    String rid = _jStr(msg, "id");
-    String answer = _p2pHandler ? _p2pHandler(_jStr(msg, "sdp")) : String();
-    if (answer.length()) _wsSendSdp(rid, answer);
-    else                 _wsSendError(rid, 501, "P2P off");  // -> browser uses relay
-    return true;
-  }
 
   String rid, method, path, ip;
   _shParseMsg(msg, rid, method, path, ip);

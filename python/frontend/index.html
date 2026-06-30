@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>esp32-tunnel</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="/p2p.js"></script>
   <style>
     /* 16px on form fields stops iOS Safari from auto-zooming on focus */
     input, select, textarea { font-size: 16px; }
@@ -25,7 +24,7 @@
     <div id="view-device" class="space-y-4">
       <section class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
         <div class="flex gap-2">
-          <input id="id" value="p2ptest" placeholder="device id" autocapitalize="off" autocorrect="off" spellcheck="false"
+          <input id="id" value="demo" placeholder="device id" autocapitalize="off" autocorrect="off" spellcheck="false"
             class="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 focus:border-orange-500 outline-none">
           <button id="refresh" class="shrink-0 px-4 py-2.5 rounded-lg border border-zinc-800 hover:border-orange-500 active:bg-zinc-800">↻</button>
         </div>
@@ -101,9 +100,6 @@
     const origin = location.origin;
     const key = () => $('key').value.trim();
     const hdr = () => key() ? { 'X-Tunnel-Key': key() } : {};
-    const devs = {};                       // espTunnel instance per id+key (keeps P2P channel)
-    const tunnel = id => devs[id + '|' + key()] ||= espTunnel(origin, id, { key: key() });
-
     // Render a row of buttons into `el`; highlights `activeKey`, calls onPick(key) on click.
     function buttonRow(el, entries, activeKey, baseCls, activeCls, onPick) {
       el.innerHTML = '';
@@ -149,8 +145,6 @@
 
     // ── Device view: connection methods (each returns {status, body, via}) ──
     const METHODS = {
-      p2p: { label: 'P2P', hint: 'WebRTC DataChannel, direct to device (falls back to relay).',
-        send: (id, path, m) => tunnel(id).fetch(path, { method: m }) },
       ws:  { label: 'WS', hint: 'WebSocket relay through the server. Works anywhere.',
         send: async (id, path, m) => {
           const res = await fetch(`${origin}/${id}${path.startsWith('/') ? '' : '/'}${path}`, { method: m, headers: hdr() });
@@ -163,9 +157,8 @@
           return { status: '↗', body: 'Opened ' + url, via: 'local' };
         } },
     };
-    let active = 'p2p';
-    const VIA = { p2p: 'bg-green-500/15 text-green-400', relay: 'bg-amber-500/15 text-amber-400',
-                  ws: 'bg-sky-500/15 text-sky-400', local: 'bg-violet-500/15 text-violet-400' };
+    let active = 'ws';
+    const VIA = { ws: 'bg-sky-500/15 text-sky-400', local: 'bg-violet-500/15 text-violet-400' };
 
     function renderTabs() {
       const entries = Object.entries(METHODS).map(([k, m]) => [k, m.label]);

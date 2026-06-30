@@ -7,7 +7,6 @@
 #######################################
 
 TunnelHandler	KEYWORD1
-P2PSignalHandler	KEYWORD1
 TunnelProvider	KEYWORD1
 TunnelMode	KEYWORD1
 RouteConfig	KEYWORD1
@@ -17,7 +16,6 @@ RouteConfig	KEYWORD1
 #######################################
 
 tunnelSetup	KEYWORD2
-tunnelP2P	KEYWORD2
 tunnelPublic	KEYWORD2
 tunnelKey	KEYWORD2
 tunnelLocalURL	KEYWORD2
