@@ -71,6 +71,9 @@ relay has an access key; with the others, anyone who has the link can open it.
 - **Page size.** Self-hosted, Tunnelmole and handler mode hold one reply in RAM, up to `TUN_MAX_BODY`
   (16 KB default, 64 KB max without PSRAM). Bigger replies get a clear `502`. OpenPort, bore and
   localtunnel stream, so any size works.
+- **No Server-Sent Events or WebSockets through the tunnel.** One request gets one finished reply,
+  so poll instead: `setInterval(() => fetch("state").then(r => r.json()).then(show), 1000)`.
+  Self-hosted and Tunnelmole answer an SSE request with a `501`.
 - **`WiFi.setSleep(false)`** — with WiFi power saving on, replies slow down a lot
   (measured: 1 KB took 11 s with it on, 64 ms off).
 - **Text only through the self-hosted relay** (HTML, CSS, JS, JSON, SVG).

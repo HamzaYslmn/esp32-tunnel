@@ -140,7 +140,11 @@ static void _tunFetch(const String &method, const String &path, const String &ip
     else {
       int len;
       _parseLocalResponse(_shLocal, code, type, len);
-      if (len > _MAX_BODY_SIZE) {         // say so instead of sending a truncated page
+      // ponytail: one reply per request — an endless SSE stream would hold the tunnel
+      // until TUN_MAX_BODY fills. A non-200 also stops EventSource's reconnect loop.
+      if (type.startsWith("text/event-stream")) {
+        code = 501; type = "text/plain"; body = "Server-Sent Events don't pass the tunnel; poll with fetch()";
+      } else if (len > _MAX_BODY_SIZE) {         // say so instead of sending a truncated page
         code = 502; type = "text/plain"; body = "Response larger than TUN_MAX_BODY";
       } else body = _readLocalBody(_shLocal, len);
     }
