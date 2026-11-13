@@ -15,26 +15,35 @@
 #ifndef OPENPORT_POOL
 #define OPENPORT_POOL 2          // idle data channels kept ready for visitors
 #endif
+#ifndef OPENPORT_HEARTBEAT_MS
+#define OPENPORT_HEARTBEAT_MS 600000UL   // 10 min; server expires idle sessions after 30 min
+#endif
 
 static struct : _TunBase {
   String host, cid, tok;
   int ctrlPort;
   int owed;                      // data channels the server asked for, not opened yet
-  unsigned long lastCmd;
+  unsigned long lastCmd, lastHb;
   uint8_t session[32];
 } _op;
 
 static WiFiClient _opCtrl, _opLocal, _opData[OPENPORT_POOL];
 
 // HTTPS POST to https://openport.pw/api/<path>; the JSON reply, or "" on failure.
-static String _opApi(const char *path, const String &json) {
+static String _opApi(const char *path, const String &json, int *httpCode = nullptr) {
+  if (httpCode) *httpCode = 0;
   WiFiClientSecure tls;
   if (!_tlsConnect(tls, "openport.pw", 443)) return "";
   tls.printf("POST /api/%s HTTP/1.1\r\nHost: openport.pw\r\nContent-Type: application/json\r\n"
              "Content-Length: %d\r\nConnection: close\r\n\r\n%s", path, (int)json.length(), json.c_str());
   char line[128];
-  _readLineBuf(tls, line, sizeof line, _CONNECT_MS);
-  bool ok = strstr(line, " 200");
+  int code = 0;
+  if (_readLineBuf(tls, line, sizeof line, _CONNECT_MS) > 0) {
+    const char *sp = strchr(line, ' ');
+    if (sp) code = atoi(sp + 1);
+  }
+  if (httpCode) *httpCode = code;
+  bool ok = (code >= 200 && code < 300);
   while (_readLineBuf(tls, line, sizeof line, _DRAIN_TIMEOUT) > 0) {}
   String body;
   for (unsigned long t = millis(); (tls.connected() || tls.available()) && millis() - t < 5000 && body.length() < 1024;) {
@@ -66,6 +75,18 @@ static void _opForget() {                // credentials rejected: register again
   if (p.begin("esp32tunnel", false)) { p.remove("op_id"); p.remove("op_tok"); p.end(); }
 }
 
+static String _opCredJson() {
+  return "{\"client_id\":\"" + _op.cid + "\",\"token\":\"" + _op.tok + "\"}";
+}
+
+static void _opPumpCtrl() {
+  uint8_t cmd[4];
+  while (_opCtrl.available() >= 4 && _opCtrl.read(cmd, 4) == 4) {
+    if (cmd[0] == 0) _op.owed++;                 // CreateDataChannel; 1 = heartbeat
+    _op.lastCmd = millis();
+  }
+}
+
 static bool _opInit() {
   if (WiFi.status() != WL_CONNECTED) return false;
   Preferences p;
@@ -78,13 +99,16 @@ static bool _opInit() {
     if (!_op.cid.length() || !_op.tok.length()) return false;
     if (p.begin("esp32tunnel", false)) { p.putString("op_id", _op.cid); p.putString("op_tok", _op.tok); p.end(); }
   }
+  int code = 0;
   String r = _opApi("connect", "{\"client_id\":\"" + _op.cid + "\",\"token\":\"" + _op.tok +
-                               "\",\"protocol\":\"tcp\",\"local_port\":" + String(TUN_PORT) + "}");
-  if (_jStr(r, "status") != "ok") { if (r.length()) _opForget(); return false; }
+                               "\",\"protocol\":\"tcp\",\"local_port\":" + String(TUN_PORT) + "}", &code);
+  if (code == 401) { _opForget(); return false; }
+  if (_jStr(r, "status") != "ok") return false;
   _op.host = _jStr(r, "server_host");
   if (!_op.host.length()) _op.host = "openport.pw";
   _op.ctrlPort = _jInt(r, "control_port");
   int publicPort = _jInt(r, "remote_port");
+  if (_op.ctrlPort <= 0 || publicPort <= 0) return false;
 
   if (!_tcpConnectHost(_opCtrl, _op.host.c_str(), _op.ctrlPort)) return false;
   _setKeepAlive(_opCtrl);
@@ -103,20 +127,25 @@ static bool _opInit() {
   if (!_opReadExact(_opCtrl, ack, sizeof ack) || ack[0] != 0) { _opCtrl.stop(); return false; }
 
   _op.owed = 0;
-  _op.lastCmd = millis();
+  _op.lastCmd = _op.lastHb = millis();
   _op.url = "http://" + _op.host + ":" + String(publicPort);
   _op.ready = true;
   return true;
 }
 
 static bool _opServe() {
-  if (!_opCtrl.connected()) return false;
-  uint8_t cmd[4];
-  while (_opCtrl.available() >= 4 && _opCtrl.read(cmd, 4) == 4) {
-    if (cmd[0] == 0) _op.owed++;                 // CreateDataChannel; 1 = heartbeat
-    _op.lastCmd = millis();
+  if (WiFi.status() != WL_CONNECTED || !_opCtrl.connected()) return false;
+  _opPumpCtrl();
+  if ((unsigned long)(millis() - _op.lastCmd) > 45000UL) return false;   // missed heartbeats: reconnect
+
+  if ((unsigned long)(millis() - _op.lastHb) >= OPENPORT_HEARTBEAT_MS) {
+    int code = 0;
+    String r = _opApi("heartbeat", _opCredJson(), &code);
+    if (code == 401) { _opForget(); return false; }
+    if (_jStr(r, "status") == "ok") _op.lastHb = millis();
+    else if (OPENPORT_HEARTBEAT_MS > 60000UL) _op.lastHb = millis() - (OPENPORT_HEARTBEAT_MS - 60000UL);
+    else _op.lastHb = millis();
   }
-  if (millis() - _op.lastCmd > 40000) return false;   // missed heartbeats: reconnect
 
   for (int i = 0; i < OPENPORT_POOL; i++) {
     WiFiClient &d = _opData[i];
@@ -128,11 +157,13 @@ static bool _opServe() {
       }
       continue;
     }
+    uint8_t cmd[4];
     if (d.available() < 4 || d.read(cmd, 4) != 4) continue;
     if (cmd[0] != 0) { d.stop(); continue; }    // only TCP forwarding
     if (_tcpConnect(_opLocal, IPAddress(127, 0, 0, 1), TUN_PORT)) {
       _opLocal.setNoDelay(true);
       _tunPipe(d, _opLocal);                     // a visitor: bytes both ways until done
+      _opPumpCtrl();                             // drain control commands received during pipe
     } else d.stop();
   }
   return true;
@@ -152,7 +183,14 @@ static void _opDrop() {
 
 static void _opLoop() { _tunStep(_op, 2000, 60000, _opInit, _opServe, _opDrop); }
 
-static void _opStop() { _opDrop(); _tunEnd(_op); }
+static void _opStop() {
+  bool wasReady = _op.ready;
+  _opDrop();
+  if (wasReady && WiFi.status() == WL_CONNECTED && _op.cid.length() && _op.tok.length()) {
+    _opApi("release", _opCredJson());
+  }
+  _tunEnd(_op);
+}
 
 #endif
 #endif
